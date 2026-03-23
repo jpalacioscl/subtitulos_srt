@@ -70,6 +70,8 @@ HTML = """<!DOCTYPE html>
   #error-box { display: none; margin-top: 1.5rem; padding: 1rem; background: #1a0a0a; border: 1px solid #a33; border-radius: 10px; color: #f87171; font-size: 0.9rem; }
   .tags { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.8rem; }
   .tag { background: #2a2a3a; padding: 0.2rem 0.6rem; border-radius: 99px; font-size: 0.78rem; color: #aaa; }
+  .tab-btn { padding: 0.4rem 1rem; border-radius: 8px; border: 1px solid #333; background: #111118; color: #888; font-size: 0.85rem; cursor: pointer; transition: all .2s; }
+  .tab-btn.active { background: #7c3aed; border-color: #7c3aed; color: #fff; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -78,12 +80,26 @@ HTML = """<!DOCTYPE html>
   <p class="subtitle">Genera subtitulos .srt con IA local &mdash; Whisper + llama.cpp</p>
 
   <form id="form">
-    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
-      <p>Arrastra aqui tu archivo de video o audio</p>
-      <p style="font-size:.8rem;margin-top:.3rem">MP4, MKV, AVI, MOV, MP3, WAV, M4A...</p>
-      <div class="file-name" id="fileName"></div>
+    <div style="display:flex;gap:0.6rem;margin-bottom:0.8rem;">
+      <button type="button" id="tabFile" class="tab-btn active" onclick="switchTab('file')">Archivo local</button>
+      <button type="button" id="tabYt" class="tab-btn" onclick="switchTab('youtube')">YouTube</button>
     </div>
-    <input type="file" id="fileInput" accept="video/*,audio/*,.srt">
+
+    <div id="panelFile">
+      <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+        <p>Arrastra aqui tu archivo de video o audio</p>
+        <p style="font-size:.8rem;margin-top:.3rem">MP4, MKV, AVI, MOV, MP3, WAV, M4A...</p>
+        <div class="file-name" id="fileName"></div>
+      </div>
+      <input type="file" id="fileInput" accept="video/*,audio/*,.srt">
+    </div>
+
+    <div id="panelYoutube" style="display:none;">
+      <div class="form-group">
+        <label>URL del video de YouTube</label>
+        <input type="text" id="youtubeUrl" name="youtube_url" placeholder="https://www.youtube.com/watch?v=...">
+      </div>
+    </div>
 
     <div class="row">
       <div class="form-group">
@@ -156,6 +172,15 @@ HTML = """<!DOCTYPE html>
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
 let selectedFile = null;
+let activeTab = 'file';
+
+function switchTab(tab) {
+  activeTab = tab;
+  document.getElementById('panelFile').style.display = tab === 'file' ? 'block' : 'none';
+  document.getElementById('panelYoutube').style.display = tab === 'youtube' ? 'block' : 'none';
+  document.getElementById('tabFile').classList.toggle('active', tab === 'file');
+  document.getElementById('tabYt').classList.toggle('active', tab === 'youtube');
+}
 
 fileInput.addEventListener('change', () => {
   if (fileInput.files[0]) {
@@ -178,7 +203,10 @@ dropZone.addEventListener('drop', e => {
 
 document.getElementById('form').addEventListener('submit', async e => {
   e.preventDefault();
-  if (!selectedFile) { alert('Selecciona un archivo primero'); return; }
+
+  const youtubeUrl = document.getElementById('youtubeUrl').value.trim();
+  if (activeTab === 'file' && !selectedFile) { alert('Selecciona un archivo primero'); return; }
+  if (activeTab === 'youtube' && !youtubeUrl) { alert('Ingresa una URL de YouTube'); return; }
 
   const btn = document.getElementById('btn');
   btn.disabled = true;
@@ -187,7 +215,11 @@ document.getElementById('form').addEventListener('submit', async e => {
   document.getElementById('error-box').style.display = 'none';
 
   const fd = new FormData();
-  fd.append('file', selectedFile);
+  if (activeTab === 'youtube') {
+    fd.append('youtube_url', youtubeUrl);
+  } else {
+    fd.append('file', selectedFile);
+  }
   fd.append('language', document.getElementById('language').value);
   fd.append('model', document.getElementById('model').value);
   fd.append('translate', document.getElementById('translate').value);
@@ -227,6 +259,7 @@ function showResult(data, jobId) {
   document.getElementById('result-box').style.display = 'block';
   const tags = document.getElementById('resultTags');
   tags.innerHTML = '';
+  if (data.video_title) addTag(tags, '▶ ' + data.video_title);
   if (data.segments) addTag(tags, data.segments + ' segmentos');
   if (data.language) addTag(tags, 'Idioma: ' + data.language);
   if (data.quality) addTag(tags, 'Calidad: ' + data.quality);
@@ -264,19 +297,22 @@ def index():
 
 @app.route("/submit", methods=["POST"])
 def submit():
-    if "file" not in request.files:
-        return jsonify({"error": "No file"}), 400
-
-    f = request.files["file"]
-    if not f.filename:
-        return jsonify({"error": "Empty filename"}), 400
-
     job_id = str(uuid.uuid4())[:8]
-    suffix = Path(f.filename).suffix.lower() or ".mp4"
-    input_path = UPLOAD_DIR / f"{job_id}{suffix}"
     output_path = UPLOAD_DIR / f"{job_id}.srt"
 
-    f.save(str(input_path))
+    youtube_url = request.form.get("youtube_url", "").strip()
+
+    if youtube_url:
+        input_path = None
+    else:
+        if "file" not in request.files:
+            return jsonify({"error": "No file or YouTube URL provided"}), 400
+        f = request.files["file"]
+        if not f.filename:
+            return jsonify({"error": "Empty filename"}), 400
+        suffix = Path(f.filename).suffix.lower() or ".mp4"
+        input_path = UPLOAD_DIR / f"{job_id}{suffix}"
+        f.save(str(input_path))
 
     options = {
         "language":       request.form.get("language", "auto"),
@@ -286,6 +322,7 @@ def submit():
         "correct":        request.form.get("correct", "1") == "1",
         "auto_translate": request.form.get("auto_translate", "1") == "1",
         "diarize":        request.form.get("diarize", "0") == "1",
+        "youtube_url":    youtube_url or None,
     }
 
     with jobs_lock:
@@ -293,13 +330,13 @@ def submit():
             "status": "pending",
             "pct": 0,
             "step": "En cola...",
-            "input_path": str(input_path),
+            "input_path": str(input_path) if input_path else None,
             "output_path": str(output_path),
         }
 
     thread = threading.Thread(
         target=_run_job,
-        args=(job_id, str(input_path), str(output_path), options),
+        args=(job_id, str(input_path) if input_path else None, str(output_path), options),
         daemon=True,
     )
     thread.start()
@@ -346,17 +383,30 @@ def _update_job(job_id: str, **kwargs):
             jobs[job_id].update(kwargs)
 
 
-def _run_job(job_id: str, input_path: str, output_path: str, options: dict):
+def _run_job(job_id: str, input_path: str | None, output_path: str, options: dict):
     _update_job(job_id, status="running", pct=1, step="Iniciando pipeline...")
 
+    yt_tmpdir = None
+
     try:
-        from core.pipeline import run_pipeline, segments_to_srt
+        from core.pipeline import run_pipeline, segments_to_srt, download_youtube_audio
 
         def progress(step, pct):
             _update_job(job_id, step=step, pct=pct)
 
+        if options.get("youtube_url"):
+            import tempfile
+            yt_tmpdir = tempfile.mkdtemp(prefix="subtitleai_yt_")
+            _update_job(job_id, step="Descargando video de YouTube...", pct=2)
+            audio_path, video_title = download_youtube_audio(
+                options["youtube_url"], yt_tmpdir, progress_callback=progress
+            )
+            _update_job(job_id, video_title=video_title)
+        else:
+            audio_path = input_path
+
         result = run_pipeline(
-            audio_path=input_path,
+            audio_path=audio_path,
             language=options["language"],
             model_size=options["model"],
             enable_denoise=options["denoise"],
@@ -391,10 +441,15 @@ def _run_job(job_id: str, input_path: str, output_path: str, options: dict):
         _update_job(job_id, status="error", error=str(e), pct=0)
     finally:
         # Limpiar archivo de entrada
-        try:
-            Path(input_path).unlink(missing_ok=True)
-        except Exception:
-            pass
+        if input_path:
+            try:
+                Path(input_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        # Limpiar directorio temporal de YouTube
+        if yt_tmpdir:
+            import shutil
+            shutil.rmtree(yt_tmpdir, ignore_errors=True)
 
 
 # ─────────────────────────────────────────────

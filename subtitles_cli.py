@@ -14,6 +14,7 @@ Uso:
 import argparse
 import logging
 import sys
+import tempfile
 from pathlib import Path
 
 logging.basicConfig(
@@ -36,10 +37,12 @@ Ejemplos:
   python subtitles_cli.py video.mp4 --translate es
   python subtitles_cli.py video.mp4 --diarize --no-denoise
   python subtitles_cli.py video.mp4 --gguf ~/.subtitle_ai/models/llama3.gguf
+  python subtitles_cli.py "https://www.youtube.com/watch?v=..." --language es
+  python subtitles_cli.py "https://youtu.be/..." --translate en
         """,
     )
 
-    parser.add_argument("input", help="Archivo de audio o video (mp4, mkv, mp3, wav, m4a...)")
+    parser.add_argument("input", help="Archivo de audio/video (mp4, mkv, mp3, wav...) o URL de YouTube")
     parser.add_argument(
         "-o", "--output",
         help="Archivo .srt de salida (default: mismo nombre que la entrada)",
@@ -115,30 +118,48 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.INFO)
 
-    input_path = Path(args.input)
-    if not input_path.exists():
-        print(f"\n  Error: archivo no encontrado: {input_path}", file=sys.stderr)
+    try:
+        from core.pipeline import run_pipeline, segments_to_srt, is_youtube_url, download_youtube_audio
+    except ImportError as e:
+        print(f"\n  Error importando el pipeline: {e}", file=sys.stderr)
+        print("  Ejecuta primero: python setup_blackwell.py", file=sys.stderr)
         sys.exit(1)
 
-    output_path = Path(args.output) if args.output else input_path.with_suffix(".srt")
-
     print_banner()
-    print(f"  Entrada : {input_path}")
+
+    _tmpdir = None
+    if is_youtube_url(args.input):
+        output_path = Path(args.output) if args.output else None
+        print(f"  YouTube : {args.input}")
+        _tmpdir = tempfile.mkdtemp(prefix="subtitleai_yt_")
+        try:
+            audio_file, video_title = download_youtube_audio(
+                args.input, _tmpdir, progress_callback=make_progress_bar
+            )
+            print(f"\n  Título  : {video_title}")
+        except Exception as e:
+            print(f"\n  Error descargando YouTube: {e}", file=sys.stderr)
+            sys.exit(1)
+        if output_path is None:
+            safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in video_title)[:80]
+            output_path = Path(safe_title.strip() or "youtube_video").with_suffix(".srt")
+    else:
+        input_path = Path(args.input)
+        if not input_path.exists():
+            print(f"\n  Error: archivo no encontrado: {input_path}", file=sys.stderr)
+            sys.exit(1)
+        audio_file = str(input_path)
+        output_path = Path(args.output) if args.output else input_path.with_suffix(".srt")
+        print(f"  Entrada : {input_path}")
+
     print(f"  Salida  : {output_path}")
     print(f"  Idioma  : {args.language}  |  Modelo: {args.model}")
     if args.translate:
         print(f"  Traducir: {args.translate}")
     print()
 
-    try:
-        from core.pipeline import run_pipeline, segments_to_srt
-    except ImportError as e:
-        print(f"\n  Error importando el pipeline: {e}", file=sys.stderr)
-        print("  Ejecuta primero: python setup_blackwell.py", file=sys.stderr)
-        sys.exit(1)
-
     result = run_pipeline(
-        audio_path=str(input_path),
+        audio_path=audio_file,
         language=args.language,
         model_size=args.model,
         llm_model=args.llm_model,
@@ -179,6 +200,11 @@ def main():
             print(f"    - {e}")
 
     print(f"\n  Archivo generado: {output_path}\n")
+
+    # Limpiar directorio temporal de YouTube
+    if _tmpdir:
+        import shutil
+        shutil.rmtree(_tmpdir, ignore_errors=True)
 
 
 if __name__ == "__main__":

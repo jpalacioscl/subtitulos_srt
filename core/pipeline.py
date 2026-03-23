@@ -531,6 +531,71 @@ SUBTÍTULOS:
 
 
 # ─────────────────────────────────────────────
+# Descarga de audio desde YouTube
+# ─────────────────────────────────────────────
+
+def is_youtube_url(url: str) -> bool:
+    """Detecta si una cadena es una URL de YouTube."""
+    return (
+        url.startswith("http://") or url.startswith("https://")
+    ) and (
+        "youtube.com" in url or "youtu.be" in url
+    )
+
+
+def download_youtube_audio(url: str, output_dir: str, progress_callback=None) -> tuple[str, str]:
+    """
+    Descarga el audio de un video de YouTube usando yt-dlp.
+    Retorna (ruta_al_wav, titulo_del_video).
+    Requiere yt-dlp y ffmpeg instalados.
+    """
+    try:
+        import yt_dlp
+    except ImportError:
+        raise RuntimeError("yt-dlp no está instalado. Instala con: pip install yt-dlp")
+
+    output_template = os.path.join(output_dir, "yt_audio.%(ext)s")
+    video_title = [None]
+
+    class ProgressHook:
+        def __call__(self, d):
+            if d["status"] == "downloading" and progress_callback:
+                total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
+                downloaded = d.get("downloaded_bytes", 0)
+                if total:
+                    pct = int(downloaded / total * 100)
+                    progress_callback(f"Descargando video de YouTube... {pct}%", pct // 10)
+
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": output_template,
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "wav",
+        }],
+        "quiet": True,
+        "no_warnings": True,
+        "progress_hooks": [ProgressHook()],
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        video_title[0] = info.get("title", "youtube_video")
+
+    wav_path = os.path.join(output_dir, "yt_audio.wav")
+    if not os.path.exists(wav_path):
+        # yt-dlp puede generar otro nombre si el postprocesador tuvo problemas
+        candidates = list(Path(output_dir).glob("yt_audio.*"))
+        if candidates:
+            wav_path = str(candidates[0])
+        else:
+            raise RuntimeError("No se encontró el archivo de audio descargado de YouTube.")
+
+    logger.info(f"[YouTube] Audio descargado: {wav_path} | Título: {video_title[0]}")
+    return wav_path, video_title[0]
+
+
+# ─────────────────────────────────────────────
 # Pipeline principal orquestador
 # ─────────────────────────────────────────────
 
