@@ -1,0 +1,11 @@
+faster-whisper==1.2.1
+flask>=3.0
+librosa==0.11.0
+llama_cpp_python==0.3.16
+noisereduce==3.0.3
+requests==2.32.5
+soundfile==0.13.1
+torch==2.10.0+cu128
+torchaudio==2.10.0+cu128
+torchvision==0.25.0+cu128
+yt-dlp==2026.3.17
