@@ -364,7 +364,13 @@ def download(job_id):
     if not Path(srt_path).exists():
         return jsonify({"error": "File not found"}), 404
 
-    original_name = Path(job["input_path"]).stem + ".srt"
+    if job.get("input_path"):
+        original_name = Path(job["input_path"]).stem + ".srt"
+    elif job.get("video_title"):
+        safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in job["video_title"])[:80]
+        original_name = safe.strip() + ".srt"
+    else:
+        original_name = "subtitulos.srt"
     return send_file(
         srt_path,
         as_attachment=True,
