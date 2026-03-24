@@ -686,13 +686,9 @@ def download_youtube_audio(url: str, output_dir: Optional[str] = None, format_id
                     progress_callback(f"Descargando de YouTube... {pct}%", pct // 10)
 
     ydl_opts = {
-        "format": format_id if format_id else "bestaudio/best",
+        "format": format_id if format_id else "bestvideo+bestaudio/best",
         "outtmpl": output_template,
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "wav",
-        }],
-        "keepvideo": True,
+        "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
         "progress_hooks": [ProgressHook()],
@@ -701,19 +697,32 @@ def download_youtube_audio(url: str, output_dir: Optional[str] = None, format_id
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         title = info.get("title", "youtube_video")
-        # prepare_filename da la ruta base; FFmpegExtractAudio cambia la extensión a .wav
-        base_path = ydl.prepare_filename(info)
-        wav_path = os.path.splitext(base_path)[0] + ".wav"
+        video_path = ydl.prepare_filename(info)
 
-    if not os.path.exists(wav_path):
-        candidates = list(Path(save_dir).glob("*.wav"))
-        if candidates:
-            # tomar el más reciente
-            wav_path = str(max(candidates, key=os.path.getmtime))
+    # Si la extensión no es mp4 (por el merge_output_format) ajustar
+    if not os.path.exists(video_path):
+        base = os.path.splitext(video_path)[0]
+        for ext in (".mp4", ".mkv", ".webm"):
+            if os.path.exists(base + ext):
+                video_path = base + ext
+                break
         else:
-            raise RuntimeError("No se encontró el archivo de audio descargado de YouTube.")
+            candidates = [str(p) for p in Path(save_dir).iterdir()
+                          if p.suffix in (".mp4", ".mkv", ".webm") and p.stem != "yt_audio"]
+            if not candidates:
+                raise RuntimeError("No se encontró el video descargado de YouTube.")
+            video_path = max(candidates, key=os.path.getmtime)
 
-    logger.info(f"[YouTube] Audio guardado en: {wav_path} | Título: {title}")
+    # Extraer audio WAV con ffmpeg (mismo proceso que preprocess_audio)
+    wav_path = os.path.splitext(video_path)[0] + ".wav"
+    import subprocess
+    cmd = ["ffmpeg", "-i", video_path, "-ac", "1", "-ar", "16000",
+           "-acodec", "pcm_s16le", "-y", wav_path]
+    result = subprocess.run(cmd, capture_output=True, timeout=300)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg no pudo extraer el audio: {result.stderr.decode()}")
+
+    logger.info(f"[YouTube] Video: {video_path} | Audio: {wav_path} | Título: {title}")
     return wav_path, title
 
 
