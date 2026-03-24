@@ -663,6 +663,7 @@ def download_youtube_audio(url: str, output_dir: Optional[str] = None, format_id
             "key": "FFmpegExtractAudio",
             "preferredcodec": "wav",
         }],
+        "keepvideo": True,
         "quiet": True,
         "no_warnings": True,
         "progress_hooks": [ProgressHook()],
