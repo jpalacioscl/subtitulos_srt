@@ -631,9 +631,10 @@ def get_youtube_formats(url: str) -> tuple[str, list[dict]]:
     return title, video_fmts + audio_fmts, duration
 
 
-def download_youtube_audio(url: str, output_dir: str, format_id: Optional[str] = None, progress_callback=None) -> tuple[str, str]:
+def download_youtube_audio(url: str, output_dir: Optional[str] = None, format_id: Optional[str] = None, progress_callback=None) -> tuple[str, str]:
     """
     Descarga el audio de un video de YouTube usando yt-dlp.
+    Guarda el archivo en output_dir (default: ~/Downloads) con el título del video.
     Retorna (ruta_al_wav, titulo_del_video).
     format_id: ID de formato específico obtenido de get_youtube_formats(). None = mejor audio disponible.
     """
@@ -642,8 +643,9 @@ def download_youtube_audio(url: str, output_dir: str, format_id: Optional[str] =
     except ImportError:
         raise RuntimeError("yt-dlp no está instalado. Instala con: pip install yt-dlp")
 
-    output_template = os.path.join(output_dir, "yt_audio.%(ext)s")
-    video_title = [None]
+    save_dir = output_dir or os.path.expanduser("~/Downloads")
+    os.makedirs(save_dir, exist_ok=True)
+    output_template = os.path.join(save_dir, "%(title)s.%(ext)s")
 
     class ProgressHook:
         def __call__(self, d):
@@ -668,18 +670,21 @@ def download_youtube_audio(url: str, output_dir: str, format_id: Optional[str] =
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
-        video_title[0] = info.get("title", "youtube_video")
+        title = info.get("title", "youtube_video")
+        # prepare_filename da la ruta base; FFmpegExtractAudio cambia la extensión a .wav
+        base_path = ydl.prepare_filename(info)
+        wav_path = os.path.splitext(base_path)[0] + ".wav"
 
-    wav_path = os.path.join(output_dir, "yt_audio.wav")
     if not os.path.exists(wav_path):
-        candidates = list(Path(output_dir).glob("yt_audio.*"))
+        candidates = list(Path(save_dir).glob("*.wav"))
         if candidates:
-            wav_path = str(candidates[0])
+            # tomar el más reciente
+            wav_path = str(max(candidates, key=os.path.getmtime))
         else:
             raise RuntimeError("No se encontró el archivo de audio descargado de YouTube.")
 
-    logger.info(f"[YouTube] Audio descargado: {wav_path} | Título: {video_title[0]}")
-    return wav_path, video_title[0]
+    logger.info(f"[YouTube] Audio guardado en: {wav_path} | Título: {title}")
+    return wav_path, title
 
 
 # ─────────────────────────────────────────────

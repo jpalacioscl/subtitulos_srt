@@ -471,8 +471,6 @@ def _update_job(job_id: str, **kwargs):
 def _run_job(job_id: str, input_path: str | None, output_path: str, options: dict):
     _update_job(job_id, status="running", pct=1, step="Iniciando pipeline...")
 
-    yt_tmpdir = None
-
     try:
         from core.pipeline import run_pipeline, segments_to_srt, download_youtube_audio
 
@@ -480,11 +478,9 @@ def _run_job(job_id: str, input_path: str | None, output_path: str, options: dic
             _update_job(job_id, step=step, pct=pct)
 
         if options.get("youtube_url"):
-            import tempfile
-            yt_tmpdir = tempfile.mkdtemp(prefix="subtitleai_yt_")
             _update_job(job_id, step="Descargando video de YouTube...", pct=2)
             audio_path, video_title = download_youtube_audio(
-                options["youtube_url"], yt_tmpdir,
+                options["youtube_url"],
                 format_id=options.get("yt_format_id"),
                 progress_callback=progress,
             )
@@ -533,10 +529,6 @@ def _run_job(job_id: str, input_path: str | None, output_path: str, options: dic
                 Path(input_path).unlink(missing_ok=True)
             except Exception:
                 pass
-        # Limpiar directorio temporal de YouTube
-        if yt_tmpdir:
-            import shutil
-            shutil.rmtree(yt_tmpdir, ignore_errors=True)
 
 
 # ─────────────────────────────────────────────

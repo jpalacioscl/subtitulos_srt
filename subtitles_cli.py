@@ -14,7 +14,6 @@ Uso:
 import argparse
 import logging
 import sys
-import tempfile
 from pathlib import Path
 
 logging.basicConfig(
@@ -127,16 +126,15 @@ def main():
 
     print_banner()
 
-    _tmpdir = None
     if is_youtube_url(args.input):
         output_path = Path(args.output) if args.output else None
         print(f"  YouTube : {args.input}")
-        _tmpdir = tempfile.mkdtemp(prefix="subtitleai_yt_")
         try:
             audio_file, video_title = download_youtube_audio(
-                args.input, _tmpdir, progress_callback=make_progress_bar
+                args.input, progress_callback=make_progress_bar
             )
             print(f"\n  Título  : {video_title}")
+            print(f"  Audio   : {audio_file}")
         except Exception as e:
             print(f"\n  Error descargando YouTube: {e}", file=sys.stderr)
             sys.exit(1)
@@ -200,11 +198,6 @@ def main():
             print(f"    - {e}")
 
     print(f"\n  Archivo generado: {output_path}\n")
-
-    # Limpiar directorio temporal de YouTube
-    if _tmpdir:
-        import shutil
-        shutil.rmtree(_tmpdir, ignore_errors=True)
 
 
 if __name__ == "__main__":
