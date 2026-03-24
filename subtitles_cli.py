@@ -148,8 +148,8 @@ def main():
             print(f"\n  Error descargando YouTube: {e}", file=sys.stderr)
             sys.exit(1)
         if output_path is None:
-            safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in video_title)[:80]
-            output_path = Path(safe_title.strip() or "youtube_video").with_suffix(".srt")
+            safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in video_title)[:200]
+            output_path = Path(download_dir) / f"{safe_title.strip() or 'youtube_video'}.srt"
     else:
         input_path = Path(args.input)
         if not input_path.exists():

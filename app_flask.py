@@ -513,6 +513,14 @@ def _run_job(job_id: str, input_path: str | None, output_path: str, options: dic
         srt_content = segments_to_srt(result.segments)
         Path(output_path).write_text(srt_content, encoding="utf-8")
 
+        # Guardar SRT también en la carpeta de descarga (solo jobs de YouTube)
+        if options.get("youtube_url") and video_title:
+            download_dir = os.path.expanduser(options.get("yt_download_dir", "~/Downloads"))
+            safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in video_title)[:200]
+            srt_copy = Path(download_dir) / f"{safe_title.strip()}.srt"
+            srt_copy.write_text(srt_content, encoding="utf-8")
+            _update_job(job_id, srt_path=str(srt_copy))
+
         quality_label = result.audio_quality.quality_label if result.audio_quality else None
 
         _update_job(
