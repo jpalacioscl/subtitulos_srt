@@ -543,11 +543,14 @@ def is_youtube_url(url: str) -> bool:
     )
 
 
-def get_youtube_formats(url: str) -> tuple[str, list[dict]]:
+def get_youtube_formats(url: str) -> tuple[str, list[dict], int]:
     """
-    Consulta los formatos disponibles de un video de YouTube sin descargarlo.
-    Retorna (titulo, lista_de_formatos).
-    Cada formato tiene: format_id, label, type ('video'|'audio'), height, abr, filesize.
+    Consulta todos los formatos disponibles de un video de YouTube sin descargarlo.
+    Retorna (titulo, lista_de_formatos, duracion_segundos).
+
+    Incluye formatos DASH (solo-video de alta calidad como 1080p/4K) y combinados.
+    Para formatos solo-video, el format_id de descarga se construye como
+    'id+bestaudio' para que yt-dlp fusione automáticamente el mejor audio.
     """
     try:
         import yt_dlp
@@ -568,7 +571,15 @@ def get_youtube_formats(url: str) -> tuple[str, list[dict]]:
         mb = b / (1024 * 1024)
         return f"{mb/1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
 
-    formats = []
+    def codec_short(codec_str):
+        if not codec_str or codec_str == "none":
+            return ""
+        c = codec_str.split(".")[0].lower()
+        return {"avc1": "H.264", "vp9": "VP9", "av01": "AV1",
+                "hvc1": "H.265", "mp4a": "AAC", "opus": "Opus"}.get(c, c.upper())
+
+    video_fmts = []
+    audio_fmts = []
     seen = set()
 
     for f in info.get("formats", []):
@@ -577,41 +588,64 @@ def get_youtube_formats(url: str) -> tuple[str, list[dict]]:
         fmt_id = f.get("format_id", "")
         filesize = f.get("filesize") or f.get("filesize_approx")
         size_str = fmt_size(filesize)
+        ext = f.get("ext", "")
 
-        if vcodec != "none" and acodec != "none":
+        has_video = vcodec not in (None, "none", "")
+        has_audio = acodec not in (None, "none", "")
+
+        if has_video:
             height = f.get("height")
-            fps = f.get("fps")
+            fps = f.get("fps") or 0
             if not height:
                 continue
-            key = f"v_{height}_{int(fps) if fps else 0}"
+
+            codec = codec_short(vcodec)
+            key = f"v_{height}_{int(fps)}_{codec}"
             if key in seen:
                 continue
             seen.add(key)
+
             fps_str = f"{int(fps)}fps" if fps and int(fps) > 30 else ""
-            label = f"{height}p{fps_str} — video + audio"
+            codec_str = f" [{codec}]" if codec else ""
+
+            if has_audio:
+                # Formato combinado (generalmente ≤720p)
+                dl_format = fmt_id
+                audio_badge = " · video+audio"
+            else:
+                # Formato DASH solo-video (1080p, 1440p, 4K...)
+                # yt-dlp fusionará automáticamente con el mejor audio
+                dl_format = f"{fmt_id}+bestaudio"
+                audio_badge = " · video+audio⁺"   # ⁺ indica fusión automática
+
+            label = f"{height}p{fps_str}{codec_str}{audio_badge}"
             if size_str:
                 label += f"  ({size_str})"
-            formats.append({
-                "format_id": fmt_id,
+
+            video_fmts.append({
+                "format_id": dl_format,
                 "label": label,
                 "type": "video",
                 "height": height,
+                "fps": int(fps),
                 "filesize": filesize,
             })
 
-        elif acodec != "none" and vcodec == "none":
-            abr = f.get("abr")
-            ext = f.get("ext", "")
-            if not abr:
-                continue
-            key = f"a_{int(abr)}"
+        elif has_audio:
+            # Formato solo-audio
+            abr = f.get("abr") or 0
+            codec = codec_short(acodec)
+            key = f"a_{int(abr)}_{codec}"
             if key in seen:
                 continue
             seen.add(key)
-            label = f"Solo audio — {int(abr)} kbps ({ext})"
+
+            codec_str = f" [{codec}]" if codec else ""
+            label = f"Solo audio{codec_str} · {int(abr)} kbps ({ext})"
             if size_str:
                 label += f"  ({size_str})"
-            formats.append({
+
+            audio_fmts.append({
                 "format_id": fmt_id,
                 "label": label,
                 "type": "audio",
@@ -619,14 +653,9 @@ def get_youtube_formats(url: str) -> tuple[str, list[dict]]:
                 "filesize": filesize,
             })
 
-    video_fmts = sorted(
-        [f for f in formats if f["type"] == "video"],
-        key=lambda x: x.get("height", 0), reverse=True
-    )
-    audio_fmts = sorted(
-        [f for f in formats if f["type"] == "audio"],
-        key=lambda x: x.get("abr", 0), reverse=True
-    )
+    # Ordenar: video por resolución desc luego fps desc; audio por bitrate desc
+    video_fmts.sort(key=lambda x: (x["height"], x["fps"]), reverse=True)
+    audio_fmts.sort(key=lambda x: x["abr"], reverse=True)
 
     return title, video_fmts + audio_fmts, duration
 

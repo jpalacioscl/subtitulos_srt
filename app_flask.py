@@ -110,8 +110,9 @@ HTML = """<!DOCTYPE html>
         <div class="form-group">
           <label>Calidad a descargar</label>
           <select id="ytFormat" name="yt_format_id">
-            <option value="">Mejor calidad disponible</option>
+            <option value="">Mejor calidad disponible (recomendado)</option>
           </select>
+          <div style="font-size:0.75rem;color:#666;margin-top:0.3rem;">⁺ El audio se fusiona automáticamente con el video</div>
         </div>
       </div>
       <div class="form-group">
