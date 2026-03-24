@@ -102,18 +102,22 @@ HTML = """<!DOCTYPE html>
           <button type="button" id="btnCheckQuality" onclick="fetchQualities()" style="padding:0.6rem 1rem;background:#2a2a3a;border:1px solid #444;border-radius:8px;color:#ccc;cursor:pointer;white-space:nowrap;font-size:0.85rem;">Ver calidades</button>
         </div>
       </div>
+      <div id="ytLoading" style="display:none;font-size:0.85rem;color:#888;margin-bottom:0.8rem;">Consultando formatos disponibles...</div>
+      <div id="ytError" style="display:none;font-size:0.85rem;color:#f87171;margin-bottom:0.8rem;"></div>
       <div id="ytInfo" style="display:none;">
-        <div id="ytTitle" style="font-size:0.85rem;color:#a78bfa;margin-bottom:0.6rem;font-weight:600;"></div>
+        <div id="ytTitle" style="font-size:0.85rem;color:#a78bfa;margin-bottom:0.3rem;font-weight:600;"></div>
+        <div id="ytDuration" style="font-size:0.78rem;color:#666;margin-bottom:0.8rem;"></div>
         <div class="form-group">
           <label>Calidad a descargar</label>
           <select id="ytFormat" name="yt_format_id">
             <option value="">Mejor calidad disponible</option>
           </select>
         </div>
-        <div id="ytDuration" style="font-size:0.78rem;color:#666;margin-top:-0.6rem;margin-bottom:0.8rem;"></div>
       </div>
-      <div id="ytLoading" style="display:none;font-size:0.85rem;color:#888;margin-bottom:0.8rem;">Consultando formatos disponibles...</div>
-      <div id="ytError" style="display:none;font-size:0.85rem;color:#f87171;margin-bottom:0.8rem;"></div>
+      <div class="form-group">
+        <label>Carpeta de descarga</label>
+        <input type="text" id="ytDownloadDir" name="yt_download_dir" value="~/Downloads">
+      </div>
     </div>
 
     <div class="row">
@@ -281,6 +285,7 @@ document.getElementById('form').addEventListener('submit', async e => {
   if (activeTab === 'youtube') {
     fd.append('youtube_url', youtubeUrl);
     fd.append('yt_format_id', document.getElementById('ytFormat').value);
+    fd.append('yt_download_dir', document.getElementById('ytDownloadDir').value);
   } else {
     fd.append('file', selectedFile);
   }
@@ -388,6 +393,7 @@ def submit():
         "diarize":        request.form.get("diarize", "0") == "1",
         "youtube_url":    youtube_url or None,
         "yt_format_id":   request.form.get("yt_format_id", "").strip() or None,
+        "yt_download_dir": request.form.get("yt_download_dir", "~/Downloads").strip() or "~/Downloads",
     }
 
     with jobs_lock:
@@ -479,8 +485,10 @@ def _run_job(job_id: str, input_path: str | None, output_path: str, options: dic
 
         if options.get("youtube_url"):
             _update_job(job_id, step="Descargando video de YouTube...", pct=2)
+            download_dir = os.path.expanduser(options.get("yt_download_dir", "~/Downloads"))
             audio_path, video_title = download_youtube_audio(
                 options["youtube_url"],
+                output_dir=download_dir,
                 format_id=options.get("yt_format_id"),
                 progress_callback=progress,
             )

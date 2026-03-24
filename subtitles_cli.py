@@ -13,6 +13,7 @@ Uso:
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -89,6 +90,13 @@ Ejemplos:
     dia.add_argument("--diarize", action="store_true", help="Identificar hablantes (requiere HF_TOKEN)")
     dia.add_argument("--hf-token", metavar="TOKEN", help="Token de HuggingFace para pyannote")
 
+    # YouTube
+    yt = parser.add_argument_group("YouTube")
+    yt.add_argument(
+        "--download-dir", default="~/Downloads", metavar="DIR",
+        help="Carpeta donde guardar el video y audio de YouTube (default: ~/Downloads)",
+    )
+
     # Misc
     parser.add_argument("-v", "--verbose", action="store_true", help="Mostrar logs detallados")
 
@@ -130,8 +138,9 @@ def main():
         output_path = Path(args.output) if args.output else None
         print(f"  YouTube : {args.input}")
         try:
+            download_dir = os.path.expanduser(args.download_dir)
             audio_file, video_title = download_youtube_audio(
-                args.input, progress_callback=make_progress_bar
+                args.input, output_dir=download_dir, progress_callback=make_progress_bar
             )
             print(f"\n  Título  : {video_title}")
             print(f"  Audio   : {audio_file}")
