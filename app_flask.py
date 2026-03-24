@@ -97,8 +97,23 @@ HTML = """<!DOCTYPE html>
     <div id="panelYoutube" style="display:none;">
       <div class="form-group">
         <label>URL del video de YouTube</label>
-        <input type="text" id="youtubeUrl" name="youtube_url" placeholder="https://www.youtube.com/watch?v=...">
+        <div style="display:flex;gap:0.5rem;">
+          <input type="text" id="youtubeUrl" name="youtube_url" placeholder="https://www.youtube.com/watch?v=..." style="flex:1;">
+          <button type="button" id="btnCheckQuality" onclick="fetchQualities()" style="padding:0.6rem 1rem;background:#2a2a3a;border:1px solid #444;border-radius:8px;color:#ccc;cursor:pointer;white-space:nowrap;font-size:0.85rem;">Ver calidades</button>
+        </div>
       </div>
+      <div id="ytInfo" style="display:none;">
+        <div id="ytTitle" style="font-size:0.85rem;color:#a78bfa;margin-bottom:0.6rem;font-weight:600;"></div>
+        <div class="form-group">
+          <label>Calidad a descargar</label>
+          <select id="ytFormat" name="yt_format_id">
+            <option value="">Mejor calidad disponible</option>
+          </select>
+        </div>
+        <div id="ytDuration" style="font-size:0.78rem;color:#666;margin-top:-0.6rem;margin-bottom:0.8rem;"></div>
+      </div>
+      <div id="ytLoading" style="display:none;font-size:0.85rem;color:#888;margin-bottom:0.8rem;">Consultando formatos disponibles...</div>
+      <div id="ytError" style="display:none;font-size:0.85rem;color:#f87171;margin-bottom:0.8rem;"></div>
     </div>
 
     <div class="row">
@@ -182,6 +197,54 @@ function switchTab(tab) {
   document.getElementById('tabYt').classList.toggle('active', tab === 'youtube');
 }
 
+async function fetchQualities() {
+  const url = document.getElementById('youtubeUrl').value.trim();
+  if (!url) { alert('Ingresa una URL de YouTube primero'); return; }
+
+  document.getElementById('ytInfo').style.display = 'none';
+  document.getElementById('ytError').style.display = 'none';
+  document.getElementById('ytLoading').style.display = 'block';
+  document.getElementById('btnCheckQuality').disabled = true;
+
+  try {
+    const res = await fetch('/youtube/qualities?url=' + encodeURIComponent(url));
+    const data = await res.json();
+
+    document.getElementById('ytLoading').style.display = 'none';
+    document.getElementById('btnCheckQuality').disabled = false;
+
+    if (data.error) {
+      document.getElementById('ytError').style.display = 'block';
+      document.getElementById('ytError').textContent = 'Error: ' + data.error;
+      return;
+    }
+
+    document.getElementById('ytTitle').textContent = '▶ ' + data.title;
+
+    if (data.duration) {
+      const m = Math.floor(data.duration / 60);
+      const s = Math.floor(data.duration % 60);
+      document.getElementById('ytDuration').textContent = `Duración: ${m}:${String(s).padStart(2,'0')}`;
+    }
+
+    const sel = document.getElementById('ytFormat');
+    sel.innerHTML = '<option value="">Mejor calidad disponible (recomendado)</option>';
+    (data.formats || []).forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f.format_id;
+      opt.textContent = f.label;
+      sel.appendChild(opt);
+    });
+
+    document.getElementById('ytInfo').style.display = 'block';
+  } catch (e) {
+    document.getElementById('ytLoading').style.display = 'none';
+    document.getElementById('btnCheckQuality').disabled = false;
+    document.getElementById('ytError').style.display = 'block';
+    document.getElementById('ytError').textContent = 'Error de conexión: ' + e.message;
+  }
+}
+
 fileInput.addEventListener('change', () => {
   if (fileInput.files[0]) {
     selectedFile = fileInput.files[0];
@@ -217,6 +280,7 @@ document.getElementById('form').addEventListener('submit', async e => {
   const fd = new FormData();
   if (activeTab === 'youtube') {
     fd.append('youtube_url', youtubeUrl);
+    fd.append('yt_format_id', document.getElementById('ytFormat').value);
   } else {
     fd.append('file', selectedFile);
   }
@@ -323,6 +387,7 @@ def submit():
         "auto_translate": request.form.get("auto_translate", "1") == "1",
         "diarize":        request.form.get("diarize", "0") == "1",
         "youtube_url":    youtube_url or None,
+        "yt_format_id":   request.form.get("yt_format_id", "").strip() or None,
     }
 
     with jobs_lock:
@@ -342,6 +407,20 @@ def submit():
     thread.start()
 
     return jsonify({"job_id": job_id})
+
+
+@app.route("/youtube/qualities")
+def youtube_qualities():
+    url = request.args.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "URL requerida"}), 400
+    try:
+        from core.pipeline import get_youtube_formats
+        title, formats, duration = get_youtube_formats(url)
+        return jsonify({"title": title, "formats": formats, "duration": duration})
+    except Exception as e:
+        logging.exception("[YouTube] Error obteniendo formatos")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/status/<job_id>")
@@ -405,7 +484,9 @@ def _run_job(job_id: str, input_path: str | None, output_path: str, options: dic
             yt_tmpdir = tempfile.mkdtemp(prefix="subtitleai_yt_")
             _update_job(job_id, step="Descargando video de YouTube...", pct=2)
             audio_path, video_title = download_youtube_audio(
-                options["youtube_url"], yt_tmpdir, progress_callback=progress
+                options["youtube_url"], yt_tmpdir,
+                format_id=options.get("yt_format_id"),
+                progress_callback=progress,
             )
             _update_job(job_id, video_title=video_title)
         else:

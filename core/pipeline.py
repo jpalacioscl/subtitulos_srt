@@ -543,11 +543,99 @@ def is_youtube_url(url: str) -> bool:
     )
 
 
-def download_youtube_audio(url: str, output_dir: str, progress_callback=None) -> tuple[str, str]:
+def get_youtube_formats(url: str) -> tuple[str, list[dict]]:
+    """
+    Consulta los formatos disponibles de un video de YouTube sin descargarlo.
+    Retorna (titulo, lista_de_formatos).
+    Cada formato tiene: format_id, label, type ('video'|'audio'), height, abr, filesize.
+    """
+    try:
+        import yt_dlp
+    except ImportError:
+        raise RuntimeError("yt-dlp no está instalado. Instala con: pip install yt-dlp")
+
+    ydl_opts = {"quiet": True, "no_warnings": True}
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+
+    title = info.get("title", "youtube_video")
+    duration = info.get("duration", 0)
+
+    def fmt_size(b):
+        if not b:
+            return ""
+        mb = b / (1024 * 1024)
+        return f"{mb/1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
+
+    formats = []
+    seen = set()
+
+    for f in info.get("formats", []):
+        vcodec = f.get("vcodec", "none")
+        acodec = f.get("acodec", "none")
+        fmt_id = f.get("format_id", "")
+        filesize = f.get("filesize") or f.get("filesize_approx")
+        size_str = fmt_size(filesize)
+
+        if vcodec != "none" and acodec != "none":
+            height = f.get("height")
+            fps = f.get("fps")
+            if not height:
+                continue
+            key = f"v_{height}_{int(fps) if fps else 0}"
+            if key in seen:
+                continue
+            seen.add(key)
+            fps_str = f"{int(fps)}fps" if fps and int(fps) > 30 else ""
+            label = f"{height}p{fps_str} — video + audio"
+            if size_str:
+                label += f"  ({size_str})"
+            formats.append({
+                "format_id": fmt_id,
+                "label": label,
+                "type": "video",
+                "height": height,
+                "filesize": filesize,
+            })
+
+        elif acodec != "none" and vcodec == "none":
+            abr = f.get("abr")
+            ext = f.get("ext", "")
+            if not abr:
+                continue
+            key = f"a_{int(abr)}"
+            if key in seen:
+                continue
+            seen.add(key)
+            label = f"Solo audio — {int(abr)} kbps ({ext})"
+            if size_str:
+                label += f"  ({size_str})"
+            formats.append({
+                "format_id": fmt_id,
+                "label": label,
+                "type": "audio",
+                "abr": abr,
+                "filesize": filesize,
+            })
+
+    video_fmts = sorted(
+        [f for f in formats if f["type"] == "video"],
+        key=lambda x: x.get("height", 0), reverse=True
+    )
+    audio_fmts = sorted(
+        [f for f in formats if f["type"] == "audio"],
+        key=lambda x: x.get("abr", 0), reverse=True
+    )
+
+    return title, video_fmts + audio_fmts, duration
+
+
+def download_youtube_audio(url: str, output_dir: str, format_id: Optional[str] = None, progress_callback=None) -> tuple[str, str]:
     """
     Descarga el audio de un video de YouTube usando yt-dlp.
     Retorna (ruta_al_wav, titulo_del_video).
-    Requiere yt-dlp y ffmpeg instalados.
+    format_id: ID de formato específico obtenido de get_youtube_formats(). None = mejor audio disponible.
     """
     try:
         import yt_dlp
@@ -564,10 +652,10 @@ def download_youtube_audio(url: str, output_dir: str, progress_callback=None) ->
                 downloaded = d.get("downloaded_bytes", 0)
                 if total:
                     pct = int(downloaded / total * 100)
-                    progress_callback(f"Descargando video de YouTube... {pct}%", pct // 10)
+                    progress_callback(f"Descargando de YouTube... {pct}%", pct // 10)
 
     ydl_opts = {
-        "format": "bestaudio/best",
+        "format": format_id if format_id else "bestaudio/best",
         "outtmpl": output_template,
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
@@ -584,7 +672,6 @@ def download_youtube_audio(url: str, output_dir: str, progress_callback=None) ->
 
     wav_path = os.path.join(output_dir, "yt_audio.wav")
     if not os.path.exists(wav_path):
-        # yt-dlp puede generar otro nombre si el postprocesador tuvo problemas
         candidates = list(Path(output_dir).glob("yt_audio.*"))
         if candidates:
             wav_path = str(candidates[0])
