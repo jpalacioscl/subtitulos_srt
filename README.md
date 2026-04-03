@@ -1,15 +1,64 @@
 # SubtitleAI
 
-Generador de subtítulos `.srt` con IA local. Transcribe audio/video usando Whisper, corrige con un LLM y opcionalmente traduce, todo sin enviar datos a la nube.
+**Generador de subtítulos `.srt` con inteligencia artificial 100% local.**
+
+Transcribe audio y video usando Whisper, corrige el texto con un LLM y traduce opcionalmente — sin enviar ningún dato a la nube.
+
+---
+
+## Características
+
+- **Transcripción con Whisper** — modelos tiny → large-v3, detección automática de idioma
+- **Reducción de ruido adaptativa** — análisis SNR, filtrado espectral, diagnóstico de calidad
+- **Corrección con LLM** — ortografía, puntuación y nombres propios corregidos automáticamente
+- **Traducción automática** — al español u otro idioma destino
+- **Identificación de hablantes** — diarización con pyannote (opcional)
+- **YouTube** — descarga, selección de formato y generación de `.srt` en un solo paso
+- **Interfaz web y CLI** — drag-and-drop en el navegador o control total desde la terminal
+- **100% local** — ningún dato sale del equipo
+
+---
+
+## Pipeline de procesamiento
+
+```
+Audio / Video / URL de YouTube
+         │
+         ▼
+[0] Diagnóstico de calidad      librosa — SNR, ratio de voz, tipo de ruido
+         │                      Ajusta modelo Whisper y beam_size automáticamente
+         ▼
+[1] Preprocesamiento            ffmpeg → WAV mono 16 kHz
+         │                      noisereduce → reducción de ruido adaptativa
+         ▼
+[2] Transcripción ASR           faster-whisper (float16 en GPU)
+         │                      VAD filter, word timestamps, beam search
+         ▼
+[3] Diarización (opcional)      pyannote/speaker-diarization-3.1
+         │                      Asigna Hablante A / B / C a cada segmento
+         ▼
+[4] Corrección LLM              llama.cpp (principal) → Ollama (fallback)
+         │                      Corrige ortografía, puntuación, nombres propios
+         ▼
+[5] Traducción LLM (opcional)   Mismo motor LLM
+         │                      Auto-traduce al español si el audio no es en español
+         ▼
+      archivo .srt
+```
+
+---
 
 ## Hardware recomendado
 
-| Componente | Mínimo | Este proyecto |
+| Componente | Mínimo | Configuración de desarrollo |
 |---|---|---|
-| GPU | — | RTX 5060 Laptop (8 GB VRAM, Blackwell sm_120) |
+| GPU | — | NVIDIA RTX 5060 Laptop 8 GB (Blackwell sm_120) |
 | RAM | 8 GB | 64 GB |
 | Python | 3.10+ | 3.12.3 |
-| OS | Ubuntu | Ubuntu 24.04 LTS |
+| SO | Ubuntu 20.04+ | Ubuntu 24.04 LTS |
+| CUDA | 11.8+ | 12.8 |
+
+> La GPU es opcional. Sin GPU el pipeline funciona en CPU (más lento).
 
 ---
 
@@ -22,19 +71,19 @@ git clone git@github.com:jpalacioscl/subtitulos_srt.git
 cd subtitulos_srt
 ```
 
-### 2. Instalar dependencias
+### 2. Instalar dependencias y modelos
 
 ```bash
 python3 setup_blackwell.py
 ```
 
-Esto instala automáticamente en un entorno virtual (`venv/`):
+El instalador crea automáticamente un entorno virtual (`venv/`) con:
 
-- PyTorch 2.10 + CUDA 12.8 (Blackwell)
+- PyTorch 2.10 + CUDA 12.8
 - faster-whisper
 - llama-cpp-python compilado con CUDA
 - librosa, noisereduce, soundfile
-- Flask, FastAPI, uvicorn
+- Flask, yt-dlp, ffmpeg
 
 Y descarga el modelo GGUF recomendado (~4.9 GB):
 
@@ -51,41 +100,61 @@ python3 setup_blackwell.py --download  # solo descargar el modelo GGUF
 python3 setup_blackwell.py --verify    # verificar el entorno instalado
 ```
 
+### Verificar instalación
+
+```bash
+source venv/bin/activate
+python3 setup_blackwell.py --verify
+```
+
+Salida esperada:
+
+```
+  ✓ Python 3.12.3
+  ✓ PyTorch 2.10.0+cu128 | CUDA 12.8
+  ✓ GPU: NVIDIA GeForce RTX 5060 Laptop GPU | 7.5 GB VRAM | cc=12.0 [Blackwell ✓]
+  ✓ faster-whisper instalado
+  ✓ llama-cpp-python instalado con soporte GPU (CUDA)
+  ✓ Modelos GGUF: 1 archivo (4.9 GB)
+  ✓ Flask / yt-dlp / ffmpeg
+  ✓ RAM: 63 GB
+```
+
 ---
 
 ## Uso
 
-### App web (recomendado)
+### Interfaz web (recomendado)
 
 ```bash
 ./run_web.sh
 ```
 
-Abre `http://localhost:5000` en el navegador. Interfaz de arrastrar y soltar, con progreso en tiempo real y descarga directa del `.srt`.
+Abre `http://localhost:5000`. Incluye arrastrar y soltar, selección de formato de YouTube, progreso en tiempo real y descarga directa del `.srt`.
 
-### CLI (terminal)
+### CLI
 
 ```bash
-./run_cli.sh video.mp4
+./run_cli.sh <archivo_o_url> [opciones]
 ```
 
-#### Ejemplos
+#### Ejemplos rápidos
 
 ```bash
 # Transcripción básica (idioma auto-detectado)
 ./run_cli.sh video.mp4
 
-# Especificar idioma del audio
+# Especificar idioma
 ./run_cli.sh audio.wav --language en
 
-# Usar modelo Whisper más preciso
+# Modelo Whisper más preciso
 ./run_cli.sh video.mp4 --model large-v2
 
-# Traducir al español automáticamente
+# Traducir al español
 ./run_cli.sh video.mp4 --translate es
 
-# Guardar en un archivo específico
-./run_cli.sh video.mp4 --output mis_subtitulos.srt
+# YouTube: descargar, transcribir y generar .srt
+./run_cli.sh "https://www.youtube.com/watch?v=..." --language es
 
 # Identificar hablantes (requiere HF_TOKEN)
 ./run_cli.sh video.mp4 --diarize --hf-token TU_TOKEN
@@ -100,11 +169,11 @@ Abre `http://localhost:5000` en el navegador. Interfaz de arrastrar y soltar, co
 #### Todas las opciones
 
 ```
-positional arguments:
-  input                Archivo de audio o video (mp4, mkv, mp3, wav, m4a...)
+positional:
+  input                Archivo de audio/video o URL de YouTube
 
-Transcripción (Whisper):
-  -l, --language       Idioma del audio: es, en, fr, de, auto... (default: auto)
+Transcripción:
+  -l, --language       Idioma del audio: auto, es, en, fr, de, it, pt... (default: auto)
   -m, --model          Modelo Whisper: tiny, base, small, medium, large-v2, large-v3
 
 Procesamiento de audio:
@@ -113,72 +182,46 @@ Procesamiento de audio:
 
 Motor LLM:
   --no-correct         Desactivar corrección LLM
-  --translate LANG     Traducir subtítulos al idioma indicado (es, en, fr...)
+  --translate LANG     Traducir subtítulos al idioma indicado
   --no-auto-translate  No traducir automáticamente al español
-  --gguf PATH          Ruta a modelo GGUF para llama.cpp
+  --gguf PATH          Ruta a modelo GGUF personalizado
   --llm-model MODEL    Modelo Ollama como fallback (default: llama3)
 
 Diarización:
-  --diarize            Identificar hablantes (requiere HF_TOKEN y pyannote)
-  --hf-token TOKEN     Token de HuggingFace para pyannote
+  --diarize            Identificar hablantes (requiere pyannote y HF_TOKEN)
+  --hf-token TOKEN     Token de HuggingFace
+
+YouTube:
+  --download-dir DIR   Carpeta de descarga (default: ~/Downloads)
 
 Otros:
-  -o, --output         Archivo .srt de salida
+  -o, --output FILE    Archivo .srt de salida
   -v, --verbose        Mostrar logs detallados
-```
-
----
-
-## Pipeline de procesamiento
-
-```
-Audio/Video
-    │
-    ▼
-[0] Diagnóstico de calidad         librosa — SNR, ratio de voz, tipo de ruido
-    │                              Ajusta modelo Whisper y beam_size automáticamente
-    ▼
-[1] Preprocesamiento               ffmpeg → WAV mono 16kHz
-    │                              noisereduce → reducción de ruido adaptativa
-    ▼
-[2] Transcripción ASR              faster-whisper (float16 en GPU Blackwell)
-    │                              VAD filter, word timestamps, beam search
-    ▼
-[3] Diarización (opcional)         pyannote/speaker-diarization-3.1
-    │                              Asigna Hablante A/B/C a cada segmento
-    ▼
-[4] Corrección LLM                 llama.cpp (principal) → Ollama (fallback)
-    │                              Corrige ortografía, puntuación, nombres propios
-    ▼
-[5] Traducción LLM (opcional)      Mismo motor LLM
-    │                              Auto-traduce al español si el audio no es en español
-    ▼
-Archivo .srt
 ```
 
 ---
 
 ## Motor LLM
 
-El pipeline detecta automáticamente el mejor backend disponible:
+El pipeline detecta y selecciona automáticamente el mejor backend disponible:
 
-| Prioridad | Backend | Cuándo se usa |
+| Prioridad | Backend | Cuándo se activa |
 |---|---|---|
 | 1 | **llama.cpp** | Hay un `.gguf` en `~/.subtitle_ai/models/` |
-| 2 | **Ollama** | Servidor Ollama corriendo en `localhost:11434` |
+| 2 | **Ollama** | Servidor corriendo en `localhost:11434` |
 | 3 | **Null** | Sin LLM — el pipeline continúa sin corrección |
 
-### Modelos GGUF disponibles
+### Modelos GGUF soportados
 
-| Modelo | Tamaño | VRAM | Calidad |
+| Modelo | Tamaño disco | VRAM aprox. | Calidad |
 |---|---|---|---|
 | Llama 3.1 8B Q4_K_M | 4.9 GB | ~5.5 GB | ⭐⭐⭐⭐ recomendado |
 | Llama 3.1 8B Q5_K_M | 5.7 GB | ~6.2 GB | ⭐⭐⭐⭐⭐ |
 | Mistral 7B Q4_K_M | 4.4 GB | ~5.0 GB | ⭐⭐⭐⭐ más rápido |
-| Phi-3 Mini Q4_K_M | 2.2 GB | ~2.8 GB | ⭐⭐⭐ ligero |
-| Llama 3.3 70B Q2_K | 26 GB | solo RAM | ⭐⭐⭐⭐⭐+ lento |
+| Phi-3 Mini Q4_K_M | 2.2 GB | ~2.8 GB | ⭐⭐⭐ ultraligero |
+| Llama 3.3 70B Q2_K | 26 GB | solo RAM | ⭐⭐⭐⭐⭐+ muy lento |
 
-Para descargar un modelo diferente al recomendado, colócalo en `~/.subtitle_ai/models/` y se detectará automáticamente.
+Coloca cualquier modelo `.gguf` compatible en `~/.subtitle_ai/models/` y se detectará automáticamente.
 
 ---
 
@@ -187,38 +230,32 @@ Para descargar un modelo diferente al recomendado, colócalo en `~/.subtitle_ai/
 ```
 subtitulos_srt/
 ├── core/
-│   ├── __init__.py
-│   ├── pipeline.py          # orquestador del pipeline completo
+│   ├── pipeline.py          # orquestador del pipeline completo (5 etapas)
 │   ├── llm_engine.py        # motor LLM: llama.cpp / Ollama / Null
 │   └── model_manager.py     # descarga y gestión de modelos GGUF
-├── app_flask.py             # app web con interfaz de subida y descarga
+├── app_flask.py             # interfaz web (Flask, drag-and-drop, YouTube)
 ├── subtitles_cli.py         # CLI con barra de progreso
-├── setup_blackwell.py       # instalador para RTX 5060 Blackwell
+├── setup_blackwell.py       # instalador automático para RTX Blackwell
 ├── run_cli.sh               # lanzador CLI (activa venv automáticamente)
-├── run_web.sh               # lanzador web (activa venv automáticamente)
-└── venv/                    # entorno virtual Python (no se sube a git)
+└── run_web.sh               # lanzador web (activa venv automáticamente)
 ```
 
 ---
 
-## Verificar instalación
+## Tecnologías principales
 
-```bash
-source venv/bin/activate
-python3 setup_blackwell.py --verify
-```
+| Componente | Tecnología |
+|---|---|
+| Transcripción | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
+| Inferencia LLM | [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) / [Ollama](https://ollama.com) |
+| Reducción de ruido | [noisereduce](https://github.com/timsainb/noisereduce) + librosa |
+| Diarización | [pyannote.audio](https://github.com/pyannote/pyannote-audio) |
+| YouTube | [yt-dlp](https://github.com/yt-dlp/yt-dlp) |
+| Interfaz web | Flask |
+| Deep learning | PyTorch + CUDA |
 
-Salida esperada:
+---
 
-```
-  ✓ Python 3.12.3
-  ✓ PyTorch 2.10.0+cu128 | CUDA 12.8
-  ✓ GPU: NVIDIA GeForce RTX 5060 Laptop GPU | 7.5GB VRAM | cc=12.0 [Blackwell ✓]
-  ✓ faster-whisper instalado
-  ✓ llama-cpp-python instalado
-  ✓ llama.cpp con soporte GPU (CUDA)
-  ✓ Modelos GGUF: 1 archivos (4.9 GB total)
-  ✓ Flask / FastAPI / Uvicorn
-  ✓ ffmpeg
-  ✓ RAM: 63 GB
-```
+## Licencia
+
+MIT
