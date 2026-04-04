@@ -35,10 +35,8 @@ def _lang_tag(code: str) -> str:
 
 
 def _build_lang_suffix(source: str, target: str | None) -> str:
-    src = _lang_tag(source)
-    if target:
-        return f"_{src}_{_lang_tag(target)}"
-    return f"_{src}"
+    lang = _lang_tag(target) if target else _lang_tag(source)
+    return f"_{lang}"
 
 
 def build_parser() -> argparse.ArgumentParser:
