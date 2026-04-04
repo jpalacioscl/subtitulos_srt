@@ -19,20 +19,20 @@ from flask import Flask, request, jsonify, send_file, render_template_string
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 _LANG_DISPLAY = {
-    "es": "SP", "en": "EN", "fr": "FR", "de": "DE",
-    "it": "IT", "pt": "PT", "ja": "JA", "zh": "ZH", "ru": "RU",
+    "es": "sp", "en": "en", "fr": "fr", "de": "de",
+    "it": "it", "pt": "pt", "ja": "ja", "zh": "zh", "ru": "ru",
 }
 
 
 def _lang_tag(code: str) -> str:
-    return _LANG_DISPLAY.get(code.lower(), code.upper())
+    return _LANG_DISPLAY.get(code.lower(), code.lower())
 
 
 def _build_lang_suffix(source: str, target: str | None) -> str:
     src = _lang_tag(source)
     if target:
-        return f"_|{src}|{_lang_tag(target)}|"
-    return f"_|{src}|"
+        return f"_{src}_{_lang_tag(target)}"
+    return f"_{src}"
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB max upload
