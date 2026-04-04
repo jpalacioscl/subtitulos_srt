@@ -24,6 +24,23 @@ logging.basicConfig(
 )
 
 
+_LANG_DISPLAY = {
+    "es": "SP", "en": "EN", "fr": "FR", "de": "DE",
+    "it": "IT", "pt": "PT", "ja": "JA", "zh": "ZH", "ru": "RU",
+}
+
+
+def _lang_tag(code: str) -> str:
+    return _LANG_DISPLAY.get(code.lower(), code.upper())
+
+
+def _build_lang_suffix(source: str, target: str | None) -> str:
+    src = _lang_tag(source)
+    if target:
+        return f"_|{src}|{_lang_tag(target)}|"
+    return f"_|{src}|"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="subtitles_cli",
@@ -134,32 +151,32 @@ def main():
 
     print_banner()
 
+    yt_base_title = None
+    yt_download_dir = None
+    input_path = None
+
     if is_youtube_url(args.input):
-        output_path = Path(args.output) if args.output else None
         print(f"  YouTube : {args.input}")
         try:
-            download_dir = os.path.expanduser(args.download_dir)
+            yt_download_dir = os.path.expanduser(args.download_dir)
             audio_file, video_title = download_youtube_audio(
-                args.input, output_dir=download_dir, progress_callback=make_progress_bar
+                args.input, output_dir=yt_download_dir, progress_callback=make_progress_bar
             )
             print(f"\n  Título  : {video_title}")
             print(f"  Audio   : {audio_file}")
         except Exception as e:
             print(f"\n  Error descargando YouTube: {e}", file=sys.stderr)
             sys.exit(1)
-        if output_path is None:
-            safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in video_title)[:200]
-            output_path = Path(download_dir) / f"{safe_title.strip() or 'youtube_video'}.srt"
+        safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in video_title)[:200]
+        yt_base_title = safe_title.strip() or "youtube_video"
     else:
         input_path = Path(args.input)
         if not input_path.exists():
             print(f"\n  Error: archivo no encontrado: {input_path}", file=sys.stderr)
             sys.exit(1)
         audio_file = str(input_path)
-        output_path = Path(args.output) if args.output else input_path.with_suffix(".srt")
         print(f"  Entrada : {input_path}")
 
-    print(f"  Salida  : {output_path}")
     print(f"  Idioma  : {args.language}  |  Modelo: {args.model}")
     if args.translate:
         print(f"  Traducir: {args.translate}")
@@ -182,6 +199,17 @@ def main():
     )
 
     print()  # salto de linea tras la barra de progreso
+
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        lang_suffix = _build_lang_suffix(result.language, result.target_language)
+        if yt_base_title is not None:
+            output_path = Path(yt_download_dir) / f"{yt_base_title}{lang_suffix}.srt"
+        else:
+            output_path = input_path.with_name(input_path.stem + lang_suffix + ".srt")
+
+    print(f"  Salida  : {output_path}")
 
     srt_content = segments_to_srt(result.segments)
     output_path.write_text(srt_content, encoding="utf-8")

@@ -18,6 +18,22 @@ from flask import Flask, request, jsonify, send_file, render_template_string
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
+_LANG_DISPLAY = {
+    "es": "SP", "en": "EN", "fr": "FR", "de": "DE",
+    "it": "IT", "pt": "PT", "ja": "JA", "zh": "ZH", "ru": "RU",
+}
+
+
+def _lang_tag(code: str) -> str:
+    return _LANG_DISPLAY.get(code.lower(), code.upper())
+
+
+def _build_lang_suffix(source: str, target: str | None) -> str:
+    src = _lang_tag(source)
+    if target:
+        return f"_|{src}|{_lang_tag(target)}|"
+    return f"_|{src}|"
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB max upload
 
@@ -453,13 +469,15 @@ def download(job_id):
     if not Path(srt_path).exists():
         return jsonify({"error": "File not found"}), 404
 
+    lang_suffix = _build_lang_suffix(job["source_language"], job.get("target_language")) if job.get("source_language") else ""
+
     if job.get("original_stem"):
-        original_name = job["original_stem"] + ".srt"
+        original_name = job["original_stem"] + lang_suffix + ".srt"
     elif job.get("video_title"):
         safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in job["video_title"])[:80]
-        original_name = safe.strip() + ".srt"
+        original_name = safe.strip() + lang_suffix + ".srt"
     else:
-        original_name = "subtitulos.srt"
+        original_name = "subtitulos" + lang_suffix + ".srt"
     return send_file(
         srt_path,
         as_attachment=True,
@@ -533,6 +551,7 @@ def _run_job(job_id: str, input_path: str | None, output_path: str, options: dic
             step="Completado",
             segments=len(result.segments),
             language=f"{result.language} ({result.language_probability:.0%})",
+            source_language=result.language,
             quality=quality_label,
             corrected=result.corrected,
             translated=result.translated,
