@@ -374,6 +374,7 @@ def submit():
 
     if youtube_url:
         input_path = None
+        original_stem = None
     else:
         if "file" not in request.files:
             return jsonify({"error": "No file or YouTube URL provided"}), 400
@@ -381,6 +382,7 @@ def submit():
         if not f.filename:
             return jsonify({"error": "Empty filename"}), 400
         suffix = Path(f.filename).suffix.lower() or ".mp4"
+        original_stem = Path(f.filename).stem
         input_path = UPLOAD_DIR / f"{job_id}{suffix}"
         f.save(str(input_path))
 
@@ -403,6 +405,7 @@ def submit():
             "pct": 0,
             "step": "En cola...",
             "input_path": str(input_path) if input_path else None,
+            "original_stem": original_stem if not youtube_url else None,
             "output_path": str(output_path),
         }
 
@@ -450,8 +453,8 @@ def download(job_id):
     if not Path(srt_path).exists():
         return jsonify({"error": "File not found"}), 404
 
-    if job.get("input_path"):
-        original_name = Path(job["input_path"]).stem + ".srt"
+    if job.get("original_stem"):
+        original_name = job["original_stem"] + ".srt"
     elif job.get("video_title"):
         safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in job["video_title"])[:80]
         original_name = safe.strip() + ".srt"
