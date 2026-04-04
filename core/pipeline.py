@@ -726,6 +726,29 @@ def download_youtube_audio(url: str, output_dir: Optional[str] = None, format_id
     return wav_path, title
 
 
+def _detect_language_fast(audio_path: str) -> str:
+    """
+    Detecta el idioma del audio usando Whisper tiny sobre los primeros 30 s.
+    Retorna el código ISO 639-1 detectado (ej. 'en', 'es').
+    """
+    from faster_whisper import WhisperModel
+    import numpy as np
+
+    device, compute = "cpu", "int8"
+    try:
+        import torch
+        if torch.cuda.is_available():
+            device, compute = "cuda", "float16"
+    except ImportError:
+        pass
+
+    model = WhisperModel("tiny", device=device, compute_type=compute)
+    lang, probs = model.detect_language(audio_path)
+    prob = max(probs.values()) if probs else 0.0
+    logger.info(f"[LangDetect] idioma={lang} ({prob:.0%})")
+    return lang
+
+
 # ─────────────────────────────────────────────
 # Pipeline principal orquestador
 # ─────────────────────────────────────────────
@@ -765,8 +788,17 @@ def run_pipeline(
 
     errors = []
 
+    # ── Paso 0a: Autodetección de idioma ─────────────────────
+    if language == "auto":
+        progress("Detectando idioma del audio...", 1)
+        try:
+            language = _detect_language_fast(audio_path)
+            progress(f"Idioma detectado: {language.upper()}", 2)
+        except Exception as e:
+            logger.warning(f"[LangDetect] Error: {e} — se usará auto en Whisper")
+
     # ── Inicializar LLMEngine (llama.cpp → Ollama → Null) ────
-    progress("Inicializando motor LLM...", 1)
+    progress("Inicializando motor LLM...", 3)
     try:
         from .llm_engine import LLMEngine
         llm_engine = LLMEngine.auto_detect(

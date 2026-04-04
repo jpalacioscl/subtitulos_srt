@@ -139,8 +139,8 @@ HTML = """<!DOCTYPE html>
       <div class="form-group">
         <label>Idioma del audio</label>
         <select name="language" id="language">
-          <option value="auto">Auto-detectar</option>
-          <option value="es" selected>Espanol</option>
+          <option value="auto" selected>Auto-detectar</option>
+          <option value="es">Espanol</option>
           <option value="en">Ingles</option>
           <option value="fr">Frances</option>
           <option value="de">Aleman</option>
@@ -180,7 +180,7 @@ HTML = """<!DOCTYPE html>
     <div class="checkbox-row">
       <label><input type="checkbox" name="denoise" id="denoise" checked> Reduccion de ruido</label>
       <label><input type="checkbox" name="correct" id="correct" checked> Correccion LLM</label>
-      <label><input type="checkbox" name="auto_translate" id="auto_translate" checked> Auto-traducir al espanol</label>
+      <label><input type="checkbox" name="auto_translate" id="auto_translate"> Auto-traducir al espanol</label>
       <label><input type="checkbox" name="diarize" id="diarize"> Identificar hablantes</label>
     </div>
 
