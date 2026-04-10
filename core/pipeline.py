@@ -979,10 +979,7 @@ def _transcribe_with_beam(
     except ImportError:
         pass
 
-    model = WhisperModel(model_size, device=device, compute_type=compute)
-
-    raw_segments, info = model.transcribe(
-        audio_path,
+    transcribe_kwargs = dict(
         language=language if language != "auto" else None,
         beam_size=beam_size,
         best_of=max(3, beam_size // 2),        # evalúa múltiples candidatos
@@ -997,6 +994,26 @@ def _transcribe_with_beam(
         },
         word_timestamps=True,
     )
+
+    model = WhisperModel(model_size, device=device, compute_type=compute)
+    try:
+        raw_segments, info = model.transcribe(audio_path, **transcribe_kwargs)
+        # Materializar el generador aquí para capturar OOM en GPU
+        raw_segments = list(raw_segments)
+    except Exception as e:
+        if device == "cuda" and ("out of memory" in str(e).lower() or "cudaerror" in str(e).lower()):
+            logger.warning(f"[ASR] CUDA OOM ({e}) — reintentando en CPU int8.")
+            try:
+                import torch as _torch
+                _torch.cuda.empty_cache()
+            except Exception:
+                pass
+            del model
+            model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            raw_segments, info = model.transcribe(audio_path, **transcribe_kwargs)
+            raw_segments = list(raw_segments)
+        else:
+            raise
 
     segments = [
         Segment(
