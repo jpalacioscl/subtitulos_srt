@@ -4,5 +4,4 @@
 #      ./run_cli.sh --help
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$DIR/venv/bin/activate"
-python "$DIR/subtitles_cli.py" "$@"
+"$DIR/venv/bin/python3" "$DIR/subtitles_cli.py" "$@"

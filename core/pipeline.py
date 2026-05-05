@@ -165,10 +165,11 @@ def transcribe(audio_path: str, language: str = "es", model_size: str = "medium"
 
     segments = []
     for i, seg in enumerate(raw_segments, 1):
+        end = seg.words[-1].end if getattr(seg, "words", None) else seg.end
         segments.append(Segment(
             index=i,
             start=seg.start,
-            end=seg.end,
+            end=end,
             text=seg.text.strip(),
             confidence=seg.avg_logprob if hasattr(seg, 'avg_logprob') else 1.0,
         ))
@@ -1019,7 +1020,7 @@ def _transcribe_with_beam(
         Segment(
             index=i,
             start=seg.start,
-            end=seg.end,
+            end=seg.words[-1].end if getattr(seg, "words", None) else seg.end,
             text=seg.text.strip(),
             confidence=getattr(seg, "avg_logprob", 1.0),
         )

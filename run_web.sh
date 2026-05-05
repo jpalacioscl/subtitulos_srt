@@ -3,5 +3,4 @@
 # Abre http://localhost:5000 en el navegador
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$DIR/venv/bin/activate"
-python "$DIR/app_flask.py"
+"$DIR/venv/bin/python3" "$DIR/app_flask.py"
