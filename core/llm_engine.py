@@ -407,11 +407,11 @@ class LLMEngine:
             logger.info(f"[LLMEngine] Usando GGUF explícito: {candidate_path}")
         elif search_dir.exists():
             # Buscar el modelo más grande disponible (mejor calidad)
-            # Preferencia: llama3 > mistral > phi > cualquier otro
+            # Preferencia: qwen2.5 > llama3 > mistral > phi > cualquier otro
             gguf_files = sorted(search_dir.glob("*.gguf"), key=lambda p: p.stat().st_size, reverse=True)
             if gguf_files:
                 # Priorizar por nombre
-                priority = ["llama-3", "llama3", "mistral", "qwen", "phi", "gemma"]
+                priority = ["qwen2.5", "qwen", "llama-3", "llama3", "mistral", "phi", "gemma"]
                 for pref in priority:
                     match = next((f for f in gguf_files if pref in f.name.lower()), None)
                     if match:

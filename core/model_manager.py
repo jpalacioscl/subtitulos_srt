@@ -13,7 +13,8 @@ Modelos recomendados para Alienware RTX 5060 (8GB VRAM + 64GB RAM):
   ┌──────────────────────────────────────┬────────┬──────────┬────────────────┐
   │ Modelo                               │ Tamaño │ VRAM     │ Calidad        │
   ├──────────────────────────────────────┼────────┼──────────┼────────────────┤
-  │ Llama-3.1-8B-Instruct-Q4_K_M        │ 4.9 GB │ ~5.5 GB  │ ⭐⭐⭐⭐ Rec. │
+  │ Qwen2.5-7B-Instruct-Q4_K_M          │ 4.4 GB │ ~5.0 GB  │ ⭐⭐⭐⭐⭐ Rec.│
+  │ Llama-3.1-8B-Instruct-Q4_K_M        │ 4.9 GB │ ~5.5 GB  │ ⭐⭐⭐⭐       │
   │ Llama-3.1-8B-Instruct-Q5_K_M        │ 5.7 GB │ ~6.2 GB  │ ⭐⭐⭐⭐⭐     │
   │ Mistral-7B-Instruct-v0.3-Q4_K_M     │ 4.4 GB │ ~5.0 GB  │ ⭐⭐⭐⭐       │
   │ Phi-3-mini-4k-instruct-Q4_K_M       │ 2.2 GB │ ~2.8 GB  │ ⭐⭐⭐         │
@@ -39,6 +40,20 @@ DEFAULT_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 # ─────────────────────────────────────────────
 
 RECOMMENDED_MODELS = [
+    {
+        "id": "qwen2.5-7b-q4",
+        "name": "Qwen2.5 7B Instruct Q4_K_M",
+        "filename": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+        "repo": "bartowski/Qwen2.5-7B-Instruct-GGUF",
+        "size_gb": 4.36,
+        "vram_gb": 5.0,
+        "quality": 5,
+        "speed": 4,
+        "description": "Mejor opción para español y traducción. Superior en instrucciones y multilingüe.",
+        "tag": "⭐ Recomendado",
+        "min_vram_gb": 5.0,
+        "min_ram_gb": 8,
+    },
     {
         "id": "llama3.1-8b-q4",
         "name": "Llama 3.1 8B Instruct Q4_K_M",
