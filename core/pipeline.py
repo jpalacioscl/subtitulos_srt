@@ -905,7 +905,16 @@ def run_pipeline(
                 segments = translate_with_llm(segments, target_language, llm_engine)
                 translated = True
 
-        progress("Generando archivo .srt...", 95)
+        # ── Paso 6: Formateo técnico según Guía Maestra ──────────────────
+        progress("Aplicando normas técnicas de subtitulado...", 96)
+        try:
+            from .subtitle_formatter import format_segments
+            segments = format_segments(segments)
+        except Exception as e:
+            logger.warning(f"[Formatter] Error en post-procesado: {e}")
+            errors.append(f"Formatter no aplicado: {e}")
+
+        progress("Generando archivo .srt...", 98)
 
         return PipelineResult(
             segments=segments,

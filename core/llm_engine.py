@@ -468,8 +468,15 @@ class LLMEngine:
         logger.info(f"[LLMEngine] Corrigiendo {len(segments)} segmentos con {self._backend.name}")
 
         SYSTEM = (
-            "Eres un editor profesional de subtítulos. Tu única tarea es corregir errores "
+            "Eres un editor profesional de subtítulos. Tu tarea es corregir errores "
             "evidentes de transcripción automática preservando EXACTAMENTE el formato dado. "
+            "Aplica además estas normas de subtitulado profesional:\n"
+            "- Nunca pongas punto final después de ? o !\n"
+            "- Usa guion + espacio (- texto) en líneas de diálogo simultáneo\n"
+            "- Usa puntos suspensivos (...) para pausas, dudas o interrupciones\n"
+            "- Si un subtítulo acaba interrumpido, el siguiente empieza con ...\n"
+            "- Puedes condensar frases largas para facilitar la lectura\n"
+            "- Escribe con letras los números del uno al nueve; cifras desde el 10\n"
             "Responde SOLO con el texto corregido, sin explicaciones ni comentarios."
         )
 
@@ -486,7 +493,8 @@ class LLMEngine:
                 "1. Mantén el formato: [NUMERO|INICIO-FIN] texto\n"
                 "2. NO cambies el contenido ni el significado\n"
                 "3. Si una línea está bien, cópiala igual\n"
-                "4. Responde SOLO las líneas, sin texto adicional\n\n"
+                "4. Aplica las normas de puntuación para subtítulos (sin punto tras ?/!, ...)\n"
+                "5. Responde SOLO las líneas, sin texto adicional\n\n"
                 f"TRANSCRIPCIÓN:\n{batch_text}"
             )
 
@@ -524,7 +532,13 @@ class LLMEngine:
         SYSTEM = (
             f"Eres un traductor profesional especializado en subtítulos. "
             f"Traduces de {source_name} a {lang_name} con precisión y naturalidad. "
-            f"Mantienes el tono, registro y puntuación del original. "
+            f"Aplica estas normas de subtitulado profesional:\n"
+            f"- Condensa y reduce las frases largas cuando sea necesario "
+            f"(la velocidad de lectura es menor que la velocidad del habla)\n"
+            f"- Sin punto final después de ? o !\n"
+            f"- Usa guion + espacio (- texto) para diálogos simultáneos\n"
+            f"- Usa ... para pausas, dudas e interrupciones\n"
+            f"- Cada subtítulo debe poder leerse en el tiempo que dura (máx. 17 caracteres/segundo)\n"
             f"Responde SOLO con los subtítulos traducidos, sin explicaciones."
         )
 
@@ -537,8 +551,9 @@ class LLMEngine:
                 "REGLAS ESTRICTAS:\n"
                 "1. Formato: [NUMERO] texto traducido\n"
                 "2. Traduce SOLO el texto, no los números\n"
-                "3. Subtítulos naturales y fluidos\n"
-                "4. Responde SOLO con los subtítulos\n\n"
+                "3. Subtítulos naturales, fluidos y concisos\n"
+                "4. Condensa si el original es demasiado largo para leerlo rápido\n"
+                "5. Responde SOLO con los subtítulos\n\n"
                 f"SUBTÍTULOS:\n{batch_text}"
             )
 
