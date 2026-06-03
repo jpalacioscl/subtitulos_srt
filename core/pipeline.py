@@ -76,28 +76,45 @@ def segments_to_srt(segments: list[Segment]) -> str:
 def preprocess_audio(input_path: str, output_path: str) -> str:
     """
     Convierte cualquier formato a WAV mono 16kHz (óptimo para Whisper)
-    usando ffmpeg. Si ffmpeg no está disponible, retorna el archivo original.
+    usando ffmpeg. Intenta dos estrategias antes de lanzar error.
     """
-    try:
-        import subprocess
-        cmd = [
-            "ffmpeg", "-i", input_path,
-            "-ac", "1",           # mono
-            "-ar", "16000",       # 16kHz
-            "-acodec", "pcm_s16le",
-            "-y",                 # sobrescribir
-            output_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        if result.returncode == 0:
-            logger.info(f"[Preprocesamiento] Audio convertido: {output_path}")
-            return output_path
-        else:
-            logger.warning(f"[Preprocesamiento] ffmpeg falló: {result.stderr}")
-            return input_path
-    except (FileNotFoundError, Exception) as e:
-        logger.warning(f"[Preprocesamiento] No disponible: {e}")
-        return input_path
+    import subprocess
+
+    base_flags = ["-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", "-y"]
+
+    # Intento 1: conversión estándar
+    cmd = ["ffmpeg", "-i", input_path] + base_flags + [output_path]
+    result = subprocess.run(cmd, capture_output=True, timeout=600)
+    if result.returncode == 0:
+        logger.info(f"[Preprocesamiento] Audio convertido: {output_path}")
+        return output_path
+
+    logger.warning(f"[Preprocesamiento] Intento 1 falló, probando con -map 0:a:0")
+
+    # Intento 2: forzar primer stream de audio (útil para MKV con streams múltiples)
+    cmd2 = ["ffmpeg", "-i", input_path, "-map", "0:a:0"] + base_flags + [output_path]
+    result2 = subprocess.run(cmd2, capture_output=True, timeout=600)
+    if result2.returncode == 0:
+        logger.info(f"[Preprocesamiento] Audio convertido (map 0:a:0): {output_path}")
+        return output_path
+
+    logger.warning(f"[Preprocesamiento] Intento 2 falló, probando con -err_detect ignore_err")
+
+    # Intento 3: ignorar errores de container (MKV/MP4 con header dañado pero datos legibles)
+    cmd3 = ["ffmpeg", "-fflags", "+genpts+igndts", "-err_detect", "ignore_err",
+            "-i", input_path, "-map", "0:a:0"] + base_flags + [output_path]
+    result3 = subprocess.run(cmd3, capture_output=True, timeout=600)
+    if result3.returncode == 0:
+        logger.info(f"[Preprocesamiento] Audio convertido (err_detect ignore): {output_path}")
+        return output_path
+
+    stderr = result3.stderr.decode(errors="replace")
+    logger.error(f"[Preprocesamiento] ffmpeg no pudo procesar el archivo: {stderr}")
+    raise RuntimeError(
+        f"El archivo está corrupto y no se pudo extraer el audio. "
+        f"Intenta volver a subir el archivo o usa otro formato.\n"
+        f"Detalle: {stderr[-300:]}"
+    )
 
 
 def denoise_audio(audio_path: str) -> str:

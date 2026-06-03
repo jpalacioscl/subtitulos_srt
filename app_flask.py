@@ -33,9 +33,9 @@ def _build_lang_suffix(source: str, target: str | None) -> str:
     return f"_{lang}"
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB max upload
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024 * 1024  # 50 GB max upload
 
-UPLOAD_DIR = Path("/tmp/subtitleai_uploads")
+UPLOAD_DIR = Path("/mnt/datos/subtitleai_uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Estado de los jobs en memoria: job_id -> dict
@@ -313,8 +313,9 @@ document.getElementById('form').addEventListener('submit', async e => {
   fd.append('diarize', document.getElementById('diarize').checked ? '1' : '0');
 
   const res = await fetch('/submit', { method: 'POST', body: fd });
-  const data = await res.json();
-  if (!data.job_id) { showError('Error al iniciar el job'); btn.disabled = false; return; }
+  let data;
+  try { data = await res.json(); } catch { showError('Error al conectar con el servidor'); btn.disabled = false; return; }
+  if (!data.job_id) { showError(data.error || 'Error al iniciar el job'); btn.disabled = false; return; }
 
   pollJob(data.job_id, btn);
 });
@@ -398,7 +399,25 @@ def submit():
         suffix = Path(f.filename).suffix.lower() or ".mp4"
         original_stem = Path(f.filename).stem
         input_path = UPLOAD_DIR / f"{job_id}{suffix}"
-        f.save(str(input_path))
+        try:
+            f.save(str(input_path))
+        except OSError as e:
+            import errno as _errno
+            input_path.unlink(missing_ok=True)
+            if e.errno == _errno.ENOSPC:
+                return jsonify({"error": "Sin espacio en disco para guardar el archivo. Libera espacio e inténtalo de nuevo."}), 507
+            raise
+        # Validar integridad del archivo antes de encolar
+        import subprocess as _sp
+        probe = _sp.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1", str(input_path)],
+            capture_output=True, timeout=30,
+        )
+        if probe.returncode != 0:
+            input_path.unlink(missing_ok=True)
+            err = probe.stderr.decode(errors="replace").strip().splitlines()
+            return jsonify({"error": f"El archivo está corrupto o no es un video/audio válido. Intenta subirlo de nuevo.\nDetalle: {err[-1] if err else 'desconocido'}"}), 400
 
     options = {
         "language":       request.form.get("language", "auto"),
@@ -454,6 +473,11 @@ def status(job_id):
     if not job:
         return jsonify({"status": "not_found"}), 404
     return jsonify(job)
+
+
+@app.errorhandler(413)
+def too_large(e):
+    return jsonify({"error": "El archivo supera el límite de 50 GB. Usa YouTube o comprime el video primero."}), 413
 
 
 @app.route("/download/<job_id>")
