@@ -35,7 +35,7 @@ def _build_lang_suffix(source: str, target: str | None) -> str:
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024 * 1024  # 50 GB max upload
 
-UPLOAD_DIR = Path("/mnt/datos/subtitleai_uploads")
+UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Estado de los jobs en memoria: job_id -> dict
@@ -53,6 +53,7 @@ HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SubtitleAI</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f0f13; color: #e0e0e0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
@@ -464,6 +465,11 @@ def youtube_qualities():
     except Exception as e:
         logging.exception("[YouTube] Error obteniendo formatos")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return "", 204
 
 
 @app.route("/status/<job_id>")
