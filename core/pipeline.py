@@ -487,68 +487,6 @@ def analyze_audio_quality(audio_path: str) -> AudioQualityReport:
             noise_profile="No analizado",
         )
 
-def translate_with_llm(segments: list[Segment], target_language: str, model: str = "llama3") -> list[Segment]:
-    """
-    Traduce subtítulos manteniendo timestamps exactos usando Ollama.
-    """
-    try:
-        import requests
-
-        try:
-            r = requests.get("http://localhost:11434/api/tags", timeout=3)
-            r.raise_for_status()
-        except Exception:
-            logger.warning("[Traducción] Ollama no está corriendo. Saltando traducción.")
-            return segments
-
-        lang_name = LANGUAGE_NAMES.get(target_language, target_language)
-        logger.info(f"[Traducción] Traduciendo a {lang_name} con modelo '{model}'...")
-
-        BATCH_SIZE = 15
-        translated_segments = []
-
-        for i in range(0, len(segments), BATCH_SIZE):
-            batch = segments[i:i + BATCH_SIZE]
-            batch_text = "\n".join(
-                [f"[{seg.index}] {seg.text}" for seg in batch]
-            )
-
-            prompt = f"""Eres un traductor profesional especializado en subtítulos.
-
-Traduce al {lang_name} los siguientes subtítulos.
-
-REGLAS ESTRICTAS:
-1. Mantén el formato: [NUMERO] texto traducido
-2. Traduce SOLO el texto, no los números
-3. Preserva el tono, registro y puntuación
-4. Subtítulos naturales y fluidos en {lang_name}
-5. Responde SOLO con los subtítulos traducidos
-
-SUBTÍTULOS:
-{batch_text}"""
-
-            response = requests.post(
-                "http://localhost:11434/api/generate",
-                json={"model": model, "prompt": prompt, "stream": False},
-                timeout=120
-            )
-            response.raise_for_status()
-            translated_text = response.json().get("response", "")
-
-            for line in translated_text.strip().split("\n"):
-                match = re.match(r'\[(\d+)\]\s*(.*)', line.strip())
-                if match:
-                    idx = int(match.group(1))
-                    text = match.group(2).strip()
-                    for seg in batch:
-                        if seg.index == idx:
-                            seg.text = text
-                            break
-
-            translated_segments.extend(batch)
-
-        logger.info("[Traducción] Traducción completada.")
-        return translated_segments
 
     except Exception as e:
         logger.warning(f"[Traducción] Error: {e}")
