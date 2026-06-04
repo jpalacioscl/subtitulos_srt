@@ -32,14 +32,27 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODELS_DIR = Path.home() / ".subtitle_ai" / "models"
-DEFAULT_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_MODELS_DIR = Path("/home/jaime/solo_ia/models")
 
 # ─────────────────────────────────────────────
 # Catálogo de modelos recomendados
 # ─────────────────────────────────────────────
 
 RECOMMENDED_MODELS = [
+    {
+        "id": "qwen3.5-9b-q4",
+        "name": "Qwen3.5 9B Instruct Q4_K_M",
+        "filename": "Qwen3.5-9B-Q4_K_M.gguf",
+        "repo": "bartowski/Qwen3.5-9B-Instruct-GGUF",
+        "size_gb": 5.3,
+        "vram_gb": 6.1,
+        "quality": 5,
+        "speed": 5,
+        "description": "Mejor opción disponible localmente. Corre en GPU (8GB VRAM), excelente en español e instrucciones estructuradas.",
+        "tag": "⭐ Óptimo local",
+        "min_vram_gb": 6.1,
+        "min_ram_gb": 8,
+    },
     {
         "id": "qwen2.5-7b-q4",
         "name": "Qwen2.5 7B Instruct Q4_K_M",

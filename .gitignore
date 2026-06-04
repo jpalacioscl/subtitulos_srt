@@ -10,3 +10,4 @@ __pycache__/
 *.mkv
 *.mp3
 *.m4a
+.gstack/

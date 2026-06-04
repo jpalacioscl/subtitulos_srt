@@ -39,8 +39,7 @@ logger = logging.getLogger(__name__)
 # Directorio de modelos GGUF
 # ─────────────────────────────────────────────
 
-DEFAULT_MODELS_DIR = Path.home() / ".subtitle_ai" / "models"
-DEFAULT_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_MODELS_DIR = Path("/home/jaime/solo_ia/models")
 
 
 # ─────────────────────────────────────────────
@@ -406,19 +405,46 @@ class LLMEngine:
             candidate_path = gguf_model_path
             logger.info(f"[LLMEngine] Usando GGUF explícito: {candidate_path}")
         elif search_dir.exists():
-            # Buscar el modelo más grande disponible (mejor calidad)
-            # Preferencia: qwen2.5 > llama3 > mistral > phi > cualquier otro
-            gguf_files = sorted(search_dir.glob("*.gguf"), key=lambda p: p.stat().st_size, reverse=True)
+            gguf_files = list(search_dir.glob("*.gguf"))
             if gguf_files:
-                # Priorizar por nombre
-                priority = ["qwen2.5", "qwen", "llama-3", "llama3", "mistral", "phi", "gemma"]
-                for pref in priority:
-                    match = next((f for f in gguf_files if pref in f.name.lower()), None)
-                    if match:
-                        candidate_path = str(match)
+                # Detectar VRAM disponible
+                vram_gb = 0.0
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+                except Exception:
+                    pass
+
+                # Modelos de código no son ideales para corrección/traducción de subtítulos
+                CODING_KEYWORDS = ["coder", "omnicoder", "codestral", "deepseek-coder"]
+
+                def _is_coding(f: Path) -> bool:
+                    return any(kw in f.name.lower() for kw in CODING_KEYWORDS)
+
+                def _fits_vram(f: Path) -> bool:
+                    # Estimación: el archivo ocupa ~1.15x su tamaño en VRAM al cargarse
+                    return vram_gb > 0 and f.stat().st_size / 1024 ** 3 * 1.15 <= vram_gb
+
+                # Grupos en orden de preferencia:
+                #   1. GPU + instrucción general  ← ideal para subtítulos
+                #   2. GPU + coding               ← funciona pero no óptimo
+                #   3. CPU + instrucción general  ← lento pero correcto
+                #   4. CPU + coding               ← último recurso
+                groups = [
+                    [f for f in gguf_files if _fits_vram(f) and not _is_coding(f)],
+                    [f for f in gguf_files if _fits_vram(f) and _is_coding(f)],
+                    [f for f in gguf_files if not _fits_vram(f) and not _is_coding(f)],
+                    [f for f in gguf_files if not _fits_vram(f) and _is_coding(f)],
+                ]
+                for group in groups:
+                    if group:
+                        # Dentro del grupo: el más grande = mejor calidad
+                        best = max(group, key=lambda f: f.stat().st_size)
+                        candidate_path = str(best)
+                        mode = "GPU" if _fits_vram(best) else "CPU"
+                        logger.info(f"[LLMEngine] Modelo seleccionado ({mode}): {best.name}")
                         break
-                if not candidate_path:
-                    candidate_path = str(gguf_files[0])   # el más grande
 
         if candidate_path:
             try:
