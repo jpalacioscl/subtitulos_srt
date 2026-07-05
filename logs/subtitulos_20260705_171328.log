@@ -1,8 +1,0 @@
-2026-07-05 17:13:28 [INFO] root - [Log] Sesión iniciada → logs/subtitulos_20260705_171328.log
-2026-07-05 17:13:28 [INFO] app_flask - [Job b0f8ddf8] INICIO — youtube=True | lang=auto | model=medium
-2026-07-05 17:13:28 [ERROR] app_flask - [Job b0f8ddf8] ERROR en pipeline
-Traceback (most recent call last):
-  File "/home/jaime/solo_ia/projects/subtitulos_srt/app_flask.py", line 558, in _run_job
-    audio_path, video_title = download_youtube_audio(
-                              ^^^^^^^^^^^^^^^^^^^^^^^
-TypeError: fake_download() got an unexpected keyword argument 'output_dir'

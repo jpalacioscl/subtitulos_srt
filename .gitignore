@@ -11,3 +11,5 @@ __pycache__/
 *.mp3
 *.m4a
 .gstack/
+logs/
+graphify-out/cache/
