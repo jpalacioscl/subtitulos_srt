@@ -16,21 +16,11 @@ import logging
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, render_template_string
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+from core.logging_setup import setup_logging
+from core.lang import build_srt_filename
+setup_logging()
 
-_LANG_DISPLAY = {
-    "es": "sp", "en": "en", "fr": "fr", "de": "de",
-    "it": "it", "pt": "pt", "ja": "ja", "zh": "zh", "ru": "ru",
-}
-
-
-def _lang_tag(code: str) -> str:
-    return _LANG_DISPLAY.get(code.lower(), code.lower())
-
-
-def _build_lang_suffix(source: str, target: str | None) -> str:
-    lang = _lang_tag(target) if target else _lang_tag(source)
-    return f"_{lang}"
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024 * 1024  # 50 GB max upload
@@ -62,8 +52,11 @@ HTML = """<!DOCTYPE html>
   .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
   .form-group { margin-bottom: 1.2rem; }
   label { display: block; font-size: 0.85rem; color: #aaa; margin-bottom: 0.4rem; }
-  select, input[type=text] { width: 100%; padding: 0.6rem 0.8rem; background: #111118; border: 1px solid #333; border-radius: 8px; color: #e0e0e0; font-size: 0.9rem; }
+  select, input[type=text], input[type=password] { width: 100%; padding: 0.6rem 0.8rem; background: #111118; border: 1px solid #333; border-radius: 8px; color: #e0e0e0; font-size: 0.9rem; }
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .advanced { margin-bottom: 1.2rem; }
+  .advanced summary { color: #aaa; font-size: 0.9rem; cursor: pointer; margin-bottom: 1rem; }
+  .advanced summary:hover { color: #a78bfa; }
   .drop-zone { border: 2px dashed #333; border-radius: 12px; padding: 2rem; text-align: center; cursor: pointer; transition: border-color .2s, background .2s; margin-bottom: 1.2rem; }
   .drop-zone:hover, .drop-zone.drag { border-color: #a78bfa; background: #1e1e2e; }
   .drop-zone p { color: #888; font-size: 0.9rem; }
@@ -184,6 +177,24 @@ HTML = """<!DOCTYPE html>
       <label><input type="checkbox" name="auto_translate" id="auto_translate"> Auto-traducir al espanol</label>
       <label><input type="checkbox" name="diarize" id="diarize"> Identificar hablantes</label>
     </div>
+
+    <details class="advanced">
+      <summary>Opciones avanzadas (LLM y diarizacion)</summary>
+      <div class="row">
+        <div class="form-group">
+          <label>Modelo Ollama (fallback LLM)</label>
+          <input type="text" name="llm_model" id="llm_model" value="llama3">
+        </div>
+        <div class="form-group">
+          <label>Ruta a modelo GGUF (opcional)</label>
+          <input type="text" name="gguf" id="gguf" placeholder="auto-detectar">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Token de HuggingFace (para identificar hablantes)</label>
+        <input type="password" name="hf_token" id="hf_token" placeholder="vacio = usa HF_TOKEN del entorno">
+      </div>
+    </details>
 
     <button type="submit" id="btn">Generar subtitulos</button>
   </form>
@@ -312,6 +323,9 @@ document.getElementById('form').addEventListener('submit', async e => {
   fd.append('correct', document.getElementById('correct').checked ? '1' : '0');
   fd.append('auto_translate', document.getElementById('auto_translate').checked ? '1' : '0');
   fd.append('diarize', document.getElementById('diarize').checked ? '1' : '0');
+  fd.append('llm_model', document.getElementById('llm_model').value);
+  fd.append('gguf', document.getElementById('gguf').value);
+  fd.append('hf_token', document.getElementById('hf_token').value);
 
   const res = await fetch('/submit', { method: 'POST', body: fd });
   let data;
@@ -428,6 +442,9 @@ def submit():
         "correct":        request.form.get("correct", "1") == "1",
         "auto_translate": request.form.get("auto_translate", "1") == "1",
         "diarize":        request.form.get("diarize", "0") == "1",
+        "llm_model":      request.form.get("llm_model", "llama3").strip() or "llama3",
+        "gguf_model_path": request.form.get("gguf", "").strip() or None,
+        "hf_token":       request.form.get("hf_token", "").strip() or None,
         "youtube_url":    youtube_url or None,
         "yt_format_id":   request.form.get("yt_format_id", "").strip() or None,
         "yt_download_dir": request.form.get("yt_download_dir", "~/Downloads").strip() or "~/Downloads",
@@ -497,15 +514,10 @@ def download(job_id):
     if not Path(srt_path).exists():
         return jsonify({"error": "File not found"}), 404
 
-    lang_suffix = _build_lang_suffix(job["source_language"], job.get("target_language")) if job.get("source_language") else ""
-
-    if job.get("original_stem"):
-        original_name = job["original_stem"] + lang_suffix + ".srt"
-    elif job.get("video_title"):
-        safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in job["video_title"])[:80]
-        original_name = safe.strip() + lang_suffix + ".srt"
-    else:
-        original_name = "subtitulos" + lang_suffix + ".srt"
+    base = job.get("original_stem") or job.get("video_title") or "subtitulos"
+    original_name = build_srt_filename(
+        base, job.get("source_language", ""), job.get("target_language")
+    )
     return send_file(
         srt_path,
         as_attachment=True,
@@ -525,6 +537,8 @@ def _update_job(job_id: str, **kwargs):
 
 
 def _run_job(job_id: str, input_path: str | None, output_path: str, options: dict):
+    logger.info(f"[Job {job_id}] INICIO — youtube={bool(options.get('youtube_url'))}"
+                f" | lang={options.get('language')} | model={options.get('model')}")
     _update_job(job_id, status="running", pct=1, step="Iniciando pipeline...")
 
     try:
@@ -550,12 +564,15 @@ def _run_job(job_id: str, input_path: str | None, output_path: str, options: dic
             audio_path=audio_path,
             language=options["language"],
             model_size=options["model"],
+            llm_model=options.get("llm_model", "llama3"),
+            gguf_model_path=options.get("gguf_model_path"),
             enable_denoise=options["denoise"],
             enable_diarization=options["diarize"],
             enable_correction=options["correct"],
             enable_translation=bool(options["translate"]),
             target_language=options["translate"],
             auto_translate_to_spanish=options["auto_translate"],
+            hf_token=options.get("hf_token"),
             progress_callback=progress,
         )
 
@@ -565,13 +582,17 @@ def _run_job(job_id: str, input_path: str | None, output_path: str, options: dic
         # Guardar SRT también en la carpeta de descarga (solo jobs de YouTube)
         if options.get("youtube_url") and video_title:
             download_dir = os.path.expanduser(options.get("yt_download_dir", "~/Downloads"))
-            safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in video_title)[:200]
-            srt_copy = Path(download_dir) / f"{safe_title.strip()}.srt"
+            srt_copy = Path(download_dir) / build_srt_filename(
+                video_title, result.language, result.target_language
+            )
             srt_copy.write_text(srt_content, encoding="utf-8")
             _update_job(job_id, srt_path=str(srt_copy))
 
         quality_label = result.audio_quality.quality_label if result.audio_quality else None
 
+        logger.info(f"[Job {job_id}] COMPLETADO — {len(result.segments)} segs"
+                    f" | lang={result.language} | corrected={result.corrected}"
+                    f" | translated={result.translated}")
         _update_job(
             job_id,
             status="done",
@@ -587,7 +608,7 @@ def _run_job(job_id: str, input_path: str | None, output_path: str, options: dic
         )
 
     except Exception as e:
-        logging.exception(f"[Job {job_id}] Error en pipeline")
+        logger.exception(f"[Job {job_id}] ERROR en pipeline")
         _update_job(job_id, status="error", error=str(e), pct=0)
     finally:
         # Limpiar archivo de entrada

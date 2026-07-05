@@ -525,7 +525,9 @@ class LLMEngine:
             )
 
             try:
+                logger.debug(f"[LLMEngine] Corrección lote {i//batch_size+1} — prompt ({len(user_prompt)} chars):\n{user_prompt[:400]}")
                 response = self._backend.generate_chat(SYSTEM, user_prompt, max_tokens=2048, temperature=0.05)
+                logger.debug(f"[LLMEngine] Respuesta corrección ({len(response)} chars):\n{response[:400]}")
                 for line in response.strip().split("\n"):
                     m = re.match(r'\[(\d+)\|[\d.]+-[\d.]+\]\s*(.*)', line.strip())
                     if m:
@@ -537,7 +539,7 @@ class LLMEngine:
                                 break
                 logger.info(f"[LLMEngine] Lote {i//batch_size + 1}/{-(-len(segments)//batch_size)} corregido")
             except Exception as e:
-                logger.warning(f"[LLMEngine] Error en lote {i//batch_size + 1}: {e}")
+                logger.warning(f"[LLMEngine] Error en lote {i//batch_size + 1}: {e}", exc_info=True)
 
         return segments, corrected
 
@@ -584,7 +586,9 @@ class LLMEngine:
             )
 
             try:
+                logger.debug(f"[LLMEngine] Traducción lote {i//batch_size+1} — prompt ({len(user_prompt)} chars):\n{user_prompt[:300]}")
                 response = self._backend.generate_chat(SYSTEM, user_prompt, max_tokens=2048, temperature=0.1)
+                logger.debug(f"[LLMEngine] Respuesta traducción ({len(response)} chars):\n{response[:300]}")
                 for line in response.strip().split("\n"):
                     m = re.match(r'\[(\d+)\]\s*(.*)', line.strip())
                     if m:
@@ -595,7 +599,7 @@ class LLMEngine:
                                 break
                 logger.info(f"[LLMEngine] Lote traducción {i//batch_size + 1}/{-(-len(segments)//batch_size)} OK")
             except Exception as e:
-                logger.warning(f"[LLMEngine] Error traducción lote {i//batch_size + 1}: {e}")
+                logger.warning(f"[LLMEngine] Error traducción lote {i//batch_size + 1}: {e}", exc_info=True)
 
         return segments
 

@@ -10,6 +10,7 @@ LLM Backend: llama.cpp (principal) con Ollama como fallback automático.
 import os
 import re
 import json
+import time
 import tempfile
 import logging
 from dataclasses import dataclass, field
@@ -17,6 +18,12 @@ from typing import Optional
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _fmt_time(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    return f"{int(seconds)//60}m{int(seconds)%60}s"
 
 
 # ─────────────────────────────────────────────
@@ -749,7 +756,15 @@ def run_pipeline(
         if progress_callback:
             progress_callback(step, pct)
 
+    _t_start = time.time()
     errors = []
+
+    logger.info("=" * 60)
+    logger.info(f"[Pipeline] INICIO — {Path(audio_path).name}")
+    logger.info(f"[Pipeline] idioma={language} | modelo={model_size} | denoise={enable_denoise}"
+                f" | diarize={enable_diarization} | correct={enable_correction}"
+                f" | translate={enable_translation}→{target_language}")
+    logger.info("=" * 60)
 
     # ── Paso 0a: Autodetección de idioma ─────────────────────
     if language == "auto":
@@ -796,9 +811,11 @@ def run_pipeline(
         progress(f"Calidad de audio: {quality_report.quality_label} | SNR: {quality_report.snr_db}dB", 5)
 
         # ── Paso 1: Preprocesamiento ──────────────────
+        _t1 = time.time()
         progress("Preprocesando audio...", 7)
         wav_path = os.path.join(tmpdir, "audio.wav")
         processed_path = preprocess_audio(audio_path, wav_path)
+        logger.debug(f"[Preprocesamiento] WAV generado: {processed_path}")
 
         if enable_denoise:
             denoise_strength = {
@@ -808,6 +825,8 @@ def run_pipeline(
             progress(f"Reduciendo ruido (intensidad {denoise_strength:.0%})...", 14)
             processed_path = _denoise_with_strength(processed_path, denoise_strength)
 
+        logger.info(f"[Preprocesamiento] ✓ completado en {_fmt_time(time.time()-_t1)}")
+
         # ── Paso 2: Transcripción ─────────────────────
         # Liberar VRAM del LLM antes de cargar Whisper
         # (en 8GB VRAM no pueden coexistir ambos)
@@ -815,6 +834,7 @@ def run_pipeline(
             progress("Liberando VRAM para Whisper...", 20)
             llm_engine.unload()
 
+        _t2 = time.time()
         progress(f"Transcribiendo con Whisper '{model_size}' (beam={beam_size})...", 22)
         try:
             segments, metadata = _transcribe_with_beam(processed_path, language, model_size, beam_size)
@@ -823,6 +843,14 @@ def run_pipeline(
 
         detected_lang = metadata["language"]
         progress(f"Transcripción completada — idioma detectado: {detected_lang.upper()}", 55)
+        logger.info(f"[ASR] ✓ {len(segments)} segmentos en {_fmt_time(time.time()-_t2)}"
+                    f" | lang={detected_lang} ({metadata['language_probability']:.0%})")
+        if segments:
+            logger.debug("[ASR] Primeros 3 segmentos:")
+            for s in segments[:3]:
+                logger.debug(f"  [{s.start:.1f}s→{s.end:.1f}s] {s.text!r}")
+        if not segments:
+            logger.warning("[ASR] ⚠ Transcripción produjo 0 segmentos — verifica el audio")
 
         # ── Auto-traducción al español ────────────────
         if auto_translate_to_spanish and detected_lang in NON_SPANISH_LANGUAGES:
@@ -837,23 +865,36 @@ def run_pipeline(
         # ── Paso 3: Diarización ───────────────────────
         speakers_found = 0
         if enable_diarization:
+            _t3 = time.time()
             progress("Identificando hablantes...", 60)
             diarization = diarize(processed_path, hf_token)
             if diarization:
                 segments = assign_speakers(segments, diarization)
                 speakers_found = len(set(s.speaker for s in segments if s.speaker))
+                logger.info(f"[Diarización] ✓ {speakers_found} hablantes en {_fmt_time(time.time()-_t3)}")
             else:
+                logger.warning("[Diarización] ⚠ Sin resultado — revisa HF_TOKEN y pyannote.audio")
                 errors.append("Diarización no disponible (requiere pyannote + HF_TOKEN)")
 
         # ── Paso 4: Corrección LLM ────────────────────
         corrected = False
         if enable_correction:
+            _t4 = time.time()
             backend_label = llm_engine.backend_name if llm_engine else "no disponible"
             progress(f"Corrigiendo con LLM ({backend_label})...", 70)
             original_texts = [s.text for s in segments]
             segments = correct_with_llm(segments, llm_engine)
-            corrected = any(s.text != o for s, o in zip(segments, original_texts))
-            if not corrected:
+            changed = [(o, s.text) for s, o in zip(segments, original_texts) if s.text != o]
+            corrected = bool(changed)
+            if corrected:
+                logger.info(f"[Corrección] ✓ {len(changed)}/{len(segments)} segmentos modificados"
+                            f" en {_fmt_time(time.time()-_t4)}")
+                for orig, fixed in changed[:2]:
+                    logger.debug(f"  ANTES: {orig!r}")
+                    logger.debug(f"  AFTER: {fixed!r}")
+            else:
+                logger.warning(f"[Corrección] ⚠ 0 segmentos modificados ({backend_label})"
+                               " — ¿LLM activo? ¿modelo cargado?")
                 errors.append(f"Corrección LLM no aplicada ({backend_label})")
 
         # ── Paso 5: Traducción ────────────────────────
@@ -862,21 +903,34 @@ def run_pipeline(
             if detected_lang == target_language:
                 errors.append(f"Traducción omitida: el audio ya está en {LANGUAGE_NAMES.get(target_language, target_language)}.")
             else:
+                _t5 = time.time()
                 lang_name = LANGUAGE_NAMES.get(target_language, target_language)
                 progress(f"Traduciendo a {lang_name}...", 85)
                 segments = translate_with_llm(segments, target_language, llm_engine)
                 translated = True
+                logger.info(f"[Traducción] ✓ {lang_name} en {_fmt_time(time.time()-_t5)}")
 
         # ── Paso 6: Formateo técnico según Guía Maestra ──────────────────
+        _t6 = time.time()
         progress("Aplicando normas técnicas de subtitulado...", 96)
         try:
             from .subtitle_formatter import format_segments
             segments = format_segments(segments)
+            logger.info(f"[Formatter] ✓ {len(segments)} segmentos formateados en {_fmt_time(time.time()-_t6)}")
         except Exception as e:
             logger.warning(f"[Formatter] Error en post-procesado: {e}")
             errors.append(f"Formatter no aplicado: {e}")
 
         progress("Generando archivo .srt...", 98)
+
+        _total = time.time() - _t_start
+        logger.info("=" * 60)
+        logger.info(f"[Pipeline] FIN — {_fmt_time(_total)} total")
+        logger.info(f"[Pipeline] segmentos={len(segments)} | lang={detected_lang}"
+                    f" | corrected={corrected} | translated={translated}")
+        if errors:
+            logger.info(f"[Pipeline] avisos ({len(errors)}): {' | '.join(errors)}")
+        logger.info("=" * 60)
 
         return PipelineResult(
             segments=segments,

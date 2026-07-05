@@ -1,0 +1,4 @@
+2026-06-15 18:13:29 [INFO] root - [Log] Sesión iniciada → logs/subtitulos_20260615_181329.log
+2026-06-15 18:13:29 [INFO] core.llm_engine - [LLMEngine] Modelo seleccionado (CPU): Qwen3.5-27B-Q4_K_M.gguf
+2026-06-15 18:13:29 [WARNING] core.llm_engine - [LLMEngine] ⚠ Ningún backend LLM disponible. Corrección/traducción desactivadas.
+2026-06-15 18:13:29 [INFO] core.llm_engine - [LLMEngine] Backend activo: NullBackend (sin LLM)

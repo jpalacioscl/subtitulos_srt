@@ -254,9 +254,15 @@ class ModelManager:
         """
         models = self.list_models()
         available = [m for m in models if m.is_downloaded and m.compatible]
+        logger.debug(f"[ModelManager] get_best_available: {len(models)} en catálogo,"
+                     f" {len(available)} descargados y compatibles")
+        for m in available:
+            logger.debug(f"  candidato: {m.name} | calidad={m.quality} | {m.path}")
         if not available:
+            logger.warning("[ModelManager] ⚠ Ningún modelo GGUF disponible en %s", self.models_dir)
             return None
         best = max(available, key=lambda m: m.quality)
+        logger.info(f"[ModelManager] Modelo seleccionado: {best.name} ({best.path})")
         return best.path
 
     def download_model(self, model_id: str, progress_callback=None) -> str:
