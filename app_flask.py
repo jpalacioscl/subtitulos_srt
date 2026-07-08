@@ -624,8 +624,9 @@ def _run_job(job_id: str, input_path: str | None, output_path: str, options: dic
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("""
+    port = int(os.environ.get("PORT", 5000))
+    print(f"""
   SubtitleAI — App Web
-  Abre http://localhost:5000 en tu navegador
+  Abre http://localhost:{port} en tu navegador
     """)
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
