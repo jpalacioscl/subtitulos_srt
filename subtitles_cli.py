@@ -17,26 +17,7 @@ import os
 import sys
 from pathlib import Path
 
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S",
-)
-
-
-_LANG_DISPLAY = {
-    "es": "sp", "en": "en", "fr": "fr", "de": "de",
-    "it": "it", "pt": "pt", "ja": "ja", "zh": "zh", "ru": "ru",
-}
-
-
-def _lang_tag(code: str) -> str:
-    return _LANG_DISPLAY.get(code.lower(), code.lower())
-
-
-def _build_lang_suffix(source: str, target: str | None) -> str:
-    lang = _lang_tag(target) if target else _lang_tag(source)
-    return f"_{lang}"
+from core.lang import build_lang_suffix
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -137,8 +118,8 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.verbose:
-        logging.getLogger().setLevel(logging.INFO)
+    from core.logging_setup import setup_logging
+    log_file = setup_logging(verbose=args.verbose)
 
     try:
         from core.pipeline import run_pipeline, segments_to_srt, is_youtube_url, download_youtube_audio
@@ -201,7 +182,7 @@ def main():
     if args.output:
         output_path = Path(args.output)
     else:
-        lang_suffix = _build_lang_suffix(result.language, result.target_language)
+        lang_suffix = build_lang_suffix(result.language, result.target_language)
         if yt_base_title is not None:
             output_path = Path(yt_download_dir) / f"{yt_base_title}{lang_suffix}.srt"
         else:
@@ -232,7 +213,8 @@ def main():
         for e in result.errors:
             print(f"    - {e}")
 
-    print(f"\n  Archivo generado: {output_path}\n")
+    print(f"\n  Archivo generado: {output_path}")
+    print(f"  Log guardado   : {log_file}\n")
 
 
 if __name__ == "__main__":

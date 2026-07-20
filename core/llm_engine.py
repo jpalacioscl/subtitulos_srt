@@ -39,8 +39,7 @@ logger = logging.getLogger(__name__)
 # Directorio de modelos GGUF
 # ─────────────────────────────────────────────
 
-DEFAULT_MODELS_DIR = Path.home() / ".subtitle_ai" / "models"
-DEFAULT_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_MODELS_DIR = Path("/home/jaime/solo_ia/models")
 
 
 # ─────────────────────────────────────────────
@@ -406,19 +405,46 @@ class LLMEngine:
             candidate_path = gguf_model_path
             logger.info(f"[LLMEngine] Usando GGUF explícito: {candidate_path}")
         elif search_dir.exists():
-            # Buscar el modelo más grande disponible (mejor calidad)
-            # Preferencia: qwen2.5 > llama3 > mistral > phi > cualquier otro
-            gguf_files = sorted(search_dir.glob("*.gguf"), key=lambda p: p.stat().st_size, reverse=True)
+            gguf_files = list(search_dir.glob("*.gguf"))
             if gguf_files:
-                # Priorizar por nombre
-                priority = ["qwen2.5", "qwen", "llama-3", "llama3", "mistral", "phi", "gemma"]
-                for pref in priority:
-                    match = next((f for f in gguf_files if pref in f.name.lower()), None)
-                    if match:
-                        candidate_path = str(match)
+                # Detectar VRAM disponible
+                vram_gb = 0.0
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+                except Exception:
+                    pass
+
+                # Modelos de código no son ideales para corrección/traducción de subtítulos
+                CODING_KEYWORDS = ["coder", "omnicoder", "codestral", "deepseek-coder"]
+
+                def _is_coding(f: Path) -> bool:
+                    return any(kw in f.name.lower() for kw in CODING_KEYWORDS)
+
+                def _fits_vram(f: Path) -> bool:
+                    # Estimación: el archivo ocupa ~1.15x su tamaño en VRAM al cargarse
+                    return vram_gb > 0 and f.stat().st_size / 1024 ** 3 * 1.15 <= vram_gb
+
+                # Grupos en orden de preferencia:
+                #   1. GPU + instrucción general  ← ideal para subtítulos
+                #   2. GPU + coding               ← funciona pero no óptimo
+                #   3. CPU + instrucción general  ← lento pero correcto
+                #   4. CPU + coding               ← último recurso
+                groups = [
+                    [f for f in gguf_files if _fits_vram(f) and not _is_coding(f)],
+                    [f for f in gguf_files if _fits_vram(f) and _is_coding(f)],
+                    [f for f in gguf_files if not _fits_vram(f) and not _is_coding(f)],
+                    [f for f in gguf_files if not _fits_vram(f) and _is_coding(f)],
+                ]
+                for group in groups:
+                    if group:
+                        # Dentro del grupo: el más grande = mejor calidad
+                        best = max(group, key=lambda f: f.stat().st_size)
+                        candidate_path = str(best)
+                        mode = "GPU" if _fits_vram(best) else "CPU"
+                        logger.info(f"[LLMEngine] Modelo seleccionado ({mode}): {best.name}")
                         break
-                if not candidate_path:
-                    candidate_path = str(gguf_files[0])   # el más grande
 
         if candidate_path:
             try:
@@ -468,8 +494,15 @@ class LLMEngine:
         logger.info(f"[LLMEngine] Corrigiendo {len(segments)} segmentos con {self._backend.name}")
 
         SYSTEM = (
-            "Eres un editor profesional de subtítulos. Tu única tarea es corregir errores "
+            "Eres un editor profesional de subtítulos. Tu tarea es corregir errores "
             "evidentes de transcripción automática preservando EXACTAMENTE el formato dado. "
+            "Aplica además estas normas de subtitulado profesional:\n"
+            "- Nunca pongas punto final después de ? o !\n"
+            "- Usa guion + espacio (- texto) en líneas de diálogo simultáneo\n"
+            "- Usa puntos suspensivos (...) para pausas, dudas o interrupciones\n"
+            "- Si un subtítulo acaba interrumpido, el siguiente empieza con ...\n"
+            "- Puedes condensar frases largas para facilitar la lectura\n"
+            "- Escribe con letras los números del uno al nueve; cifras desde el 10\n"
             "Responde SOLO con el texto corregido, sin explicaciones ni comentarios."
         )
 
@@ -486,12 +519,15 @@ class LLMEngine:
                 "1. Mantén el formato: [NUMERO|INICIO-FIN] texto\n"
                 "2. NO cambies el contenido ni el significado\n"
                 "3. Si una línea está bien, cópiala igual\n"
-                "4. Responde SOLO las líneas, sin texto adicional\n\n"
+                "4. Aplica las normas de puntuación para subtítulos (sin punto tras ?/!, ...)\n"
+                "5. Responde SOLO las líneas, sin texto adicional\n\n"
                 f"TRANSCRIPCIÓN:\n{batch_text}"
             )
 
             try:
+                logger.debug(f"[LLMEngine] Corrección lote {i//batch_size+1} — prompt ({len(user_prompt)} chars):\n{user_prompt[:400]}")
                 response = self._backend.generate_chat(SYSTEM, user_prompt, max_tokens=2048, temperature=0.05)
+                logger.debug(f"[LLMEngine] Respuesta corrección ({len(response)} chars):\n{response[:400]}")
                 for line in response.strip().split("\n"):
                     m = re.match(r'\[(\d+)\|[\d.]+-[\d.]+\]\s*(.*)', line.strip())
                     if m:
@@ -503,7 +539,7 @@ class LLMEngine:
                                 break
                 logger.info(f"[LLMEngine] Lote {i//batch_size + 1}/{-(-len(segments)//batch_size)} corregido")
             except Exception as e:
-                logger.warning(f"[LLMEngine] Error en lote {i//batch_size + 1}: {e}")
+                logger.warning(f"[LLMEngine] Error en lote {i//batch_size + 1}: {e}", exc_info=True)
 
         return segments, corrected
 
@@ -524,7 +560,13 @@ class LLMEngine:
         SYSTEM = (
             f"Eres un traductor profesional especializado en subtítulos. "
             f"Traduces de {source_name} a {lang_name} con precisión y naturalidad. "
-            f"Mantienes el tono, registro y puntuación del original. "
+            f"Aplica estas normas de subtitulado profesional:\n"
+            f"- Condensa y reduce las frases largas cuando sea necesario "
+            f"(la velocidad de lectura es menor que la velocidad del habla)\n"
+            f"- Sin punto final después de ? o !\n"
+            f"- Usa guion + espacio (- texto) para diálogos simultáneos\n"
+            f"- Usa ... para pausas, dudas e interrupciones\n"
+            f"- Cada subtítulo debe poder leerse en el tiempo que dura (máx. 17 caracteres/segundo)\n"
             f"Responde SOLO con los subtítulos traducidos, sin explicaciones."
         )
 
@@ -537,13 +579,16 @@ class LLMEngine:
                 "REGLAS ESTRICTAS:\n"
                 "1. Formato: [NUMERO] texto traducido\n"
                 "2. Traduce SOLO el texto, no los números\n"
-                "3. Subtítulos naturales y fluidos\n"
-                "4. Responde SOLO con los subtítulos\n\n"
+                "3. Subtítulos naturales, fluidos y concisos\n"
+                "4. Condensa si el original es demasiado largo para leerlo rápido\n"
+                "5. Responde SOLO con los subtítulos\n\n"
                 f"SUBTÍTULOS:\n{batch_text}"
             )
 
             try:
+                logger.debug(f"[LLMEngine] Traducción lote {i//batch_size+1} — prompt ({len(user_prompt)} chars):\n{user_prompt[:300]}")
                 response = self._backend.generate_chat(SYSTEM, user_prompt, max_tokens=2048, temperature=0.1)
+                logger.debug(f"[LLMEngine] Respuesta traducción ({len(response)} chars):\n{response[:300]}")
                 for line in response.strip().split("\n"):
                     m = re.match(r'\[(\d+)\]\s*(.*)', line.strip())
                     if m:
@@ -554,7 +599,7 @@ class LLMEngine:
                                 break
                 logger.info(f"[LLMEngine] Lote traducción {i//batch_size + 1}/{-(-len(segments)//batch_size)} OK")
             except Exception as e:
-                logger.warning(f"[LLMEngine] Error traducción lote {i//batch_size + 1}: {e}")
+                logger.warning(f"[LLMEngine] Error traducción lote {i//batch_size + 1}: {e}", exc_info=True)
 
         return segments
 

@@ -10,6 +10,7 @@ LLM Backend: llama.cpp (principal) con Ollama como fallback automático.
 import os
 import re
 import json
+import time
 import tempfile
 import logging
 from dataclasses import dataclass, field
@@ -17,6 +18,12 @@ from typing import Optional
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _fmt_time(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    return f"{int(seconds)//60}m{int(seconds)%60}s"
 
 
 # ─────────────────────────────────────────────
@@ -75,29 +82,53 @@ def segments_to_srt(segments: list[Segment]) -> str:
 
 def preprocess_audio(input_path: str, output_path: str) -> str:
     """
-    Convierte cualquier formato a WAV mono 16kHz (óptimo para Whisper)
-    usando ffmpeg. Si ffmpeg no está disponible, retorna el archivo original.
+    Convierte cualquier formato a WAV mono 16kHz (óptimo para Whisper).
+    Usa ffmpeg si está disponible; si no, fallback a librosa+soundfile.
     """
-    try:
-        import subprocess
-        cmd = [
-            "ffmpeg", "-i", input_path,
-            "-ac", "1",           # mono
-            "-ar", "16000",       # 16kHz
-            "-acodec", "pcm_s16le",
-            "-y",                 # sobrescribir
-            output_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    import subprocess
+    import shutil
+
+    if shutil.which("ffmpeg"):
+        base_flags = ["-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", "-y"]
+
+        cmd = ["ffmpeg", "-i", input_path] + base_flags + [output_path]
+        result = subprocess.run(cmd, capture_output=True, timeout=600)
         if result.returncode == 0:
             logger.info(f"[Preprocesamiento] Audio convertido: {output_path}")
             return output_path
-        else:
-            logger.warning(f"[Preprocesamiento] ffmpeg falló: {result.stderr}")
-            return input_path
-    except (FileNotFoundError, Exception) as e:
-        logger.warning(f"[Preprocesamiento] No disponible: {e}")
-        return input_path
+
+        logger.warning("[Preprocesamiento] Intento 1 falló, probando con -map 0:a:0")
+        cmd2 = ["ffmpeg", "-i", input_path, "-map", "0:a:0"] + base_flags + [output_path]
+        result2 = subprocess.run(cmd2, capture_output=True, timeout=600)
+        if result2.returncode == 0:
+            logger.info(f"[Preprocesamiento] Audio convertido (map 0:a:0): {output_path}")
+            return output_path
+
+        logger.warning("[Preprocesamiento] Intento 2 falló, probando con -err_detect ignore_err")
+        cmd3 = ["ffmpeg", "-fflags", "+genpts+igndts", "-err_detect", "ignore_err",
+                "-i", input_path, "-map", "0:a:0"] + base_flags + [output_path]
+        result3 = subprocess.run(cmd3, capture_output=True, timeout=600)
+        if result3.returncode == 0:
+            logger.info(f"[Preprocesamiento] Audio convertido (err_detect ignore): {output_path}")
+            return output_path
+
+        stderr = result3.stderr.decode(errors="replace")
+        logger.warning(f"[Preprocesamiento] ffmpeg falló: {stderr[-200:]} — probando fallback Python")
+
+    # Fallback: librosa + soundfile (sin ffmpeg; soporta WAV, MP3, FLAC, OGG)
+    try:
+        import librosa
+        import soundfile as sf
+        logger.info("[Preprocesamiento] Usando fallback librosa para conversión de audio.")
+        audio, _ = librosa.load(input_path, sr=16000, mono=True)
+        sf.write(output_path, audio, 16000, subtype="PCM_16")
+        logger.info(f"[Preprocesamiento] Audio convertido (librosa): {output_path}")
+        return output_path
+    except Exception as e:
+        raise RuntimeError(
+            f"No se pudo convertir el audio. Instala ffmpeg para soporte completo.\n"
+            f"Error: {e}"
+        )
 
 
 def denoise_audio(audio_path: str) -> str:
@@ -197,6 +228,7 @@ def diarize(audio_path: str, hf_token: Optional[str] = None) -> Optional[list[di
     try:
         from pyannote.audio import Pipeline
         import torch
+        import soundfile as sf
 
         token = hf_token or os.environ.get("HF_TOKEN")
         if not token:
@@ -206,17 +238,27 @@ def diarize(audio_path: str, hf_token: Optional[str] = None) -> Optional[list[di
         logger.info("[Diarización] Cargando pipeline de pyannote...")
         pipeline = Pipeline.from_pretrained(
             "pyannote/speaker-diarization-3.1",
-            use_auth_token=token
+            token=token
         )
 
         device = "cuda" if __import__("torch").cuda.is_available() else "cpu"
         pipeline = pipeline.to(__import__("torch").device(device))
 
+        # Se carga el audio en memoria con soundfile en vez de dejar que pyannote
+        # use torchcodec para decodificar el archivo: torchcodec requiere que sus
+        # binarios nativos coincidan exactamente con la versión de ffmpeg/torch
+        # instalada, lo cual falla en muchos entornos (ver #issue torchcodec).
+        audio_data, sample_rate = sf.read(audio_path, dtype="float32", always_2d=True)
+        waveform = torch.from_numpy(audio_data.T)  # (channel, time)
+
         logger.info("[Diarización] Procesando hablantes...")
-        diarization = pipeline(audio_path)
+        output = pipeline({"waveform": waveform, "sample_rate": sample_rate})
+        # pyannote.audio >=4 envuelve el resultado en DiarizeOutput
+        # (Annotation en .speaker_diarization); <4 devuelve el Annotation directo.
+        annotation = getattr(output, "speaker_diarization", output)
 
         turns = []
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
+        for turn, _, speaker in annotation.itertracks(yield_label=True):
             turns.append({
                 "start": turn.start,
                 "end": turn.end,
@@ -286,7 +328,7 @@ def correct_with_llm(segments: list[Segment], llm_engine) -> list[Segment]:
 # Capa 5: Traducción con LLM (llama.cpp / Ollama)
 # ─────────────────────────────────────────────
 
-def translate_with_llm(segments: list[Segment], target_language: str, llm_engine) -> list[Segment]:
+def translate_with_llm(segments: list[Segment], target_language: str, llm_engine, source_language: str = "en") -> list[Segment]:
     """
     Traduce subtítulos usando el LLMEngine activo.
     Soporta llama.cpp (principal) y Ollama (fallback).
@@ -295,7 +337,7 @@ def translate_with_llm(segments: list[Segment], target_language: str, llm_engine
         logger.warning("[LLM] Motor LLM no disponible. Saltando traducción.")
         return segments
 
-    return llm_engine.translate_subtitles(segments, target_language)
+    return llm_engine.translate_subtitles(segments, target_language, source_language=source_language)
 
 LANGUAGE_NAMES = {
     "es": "español", "en": "inglés", "fr": "francés",
@@ -462,73 +504,6 @@ def analyze_audio_quality(audio_path: str) -> AudioQualityReport:
             warnings=[f"Error en análisis: {str(e)}"],
             noise_profile="No analizado",
         )
-
-def translate_with_llm(segments: list[Segment], target_language: str, model: str = "llama3") -> list[Segment]:
-    """
-    Traduce subtítulos manteniendo timestamps exactos usando Ollama.
-    """
-    try:
-        import requests
-
-        try:
-            r = requests.get("http://localhost:11434/api/tags", timeout=3)
-            r.raise_for_status()
-        except Exception:
-            logger.warning("[Traducción] Ollama no está corriendo. Saltando traducción.")
-            return segments
-
-        lang_name = LANGUAGE_NAMES.get(target_language, target_language)
-        logger.info(f"[Traducción] Traduciendo a {lang_name} con modelo '{model}'...")
-
-        BATCH_SIZE = 15
-        translated_segments = []
-
-        for i in range(0, len(segments), BATCH_SIZE):
-            batch = segments[i:i + BATCH_SIZE]
-            batch_text = "\n".join(
-                [f"[{seg.index}] {seg.text}" for seg in batch]
-            )
-
-            prompt = f"""Eres un traductor profesional especializado en subtítulos.
-
-Traduce al {lang_name} los siguientes subtítulos.
-
-REGLAS ESTRICTAS:
-1. Mantén el formato: [NUMERO] texto traducido
-2. Traduce SOLO el texto, no los números
-3. Preserva el tono, registro y puntuación
-4. Subtítulos naturales y fluidos en {lang_name}
-5. Responde SOLO con los subtítulos traducidos
-
-SUBTÍTULOS:
-{batch_text}"""
-
-            response = requests.post(
-                "http://localhost:11434/api/generate",
-                json={"model": model, "prompt": prompt, "stream": False},
-                timeout=120
-            )
-            response.raise_for_status()
-            translated_text = response.json().get("response", "")
-
-            for line in translated_text.strip().split("\n"):
-                match = re.match(r'\[(\d+)\]\s*(.*)', line.strip())
-                if match:
-                    idx = int(match.group(1))
-                    text = match.group(2).strip()
-                    for seg in batch:
-                        if seg.index == idx:
-                            seg.text = text
-                            break
-
-            translated_segments.extend(batch)
-
-        logger.info("[Traducción] Traducción completada.")
-        return translated_segments
-
-    except Exception as e:
-        logger.warning(f"[Traducción] Error: {e}")
-        return segments
 
 
 # ─────────────────────────────────────────────
@@ -787,7 +762,15 @@ def run_pipeline(
         if progress_callback:
             progress_callback(step, pct)
 
+    _t_start = time.time()
     errors = []
+
+    logger.info("=" * 60)
+    logger.info(f"[Pipeline] INICIO — {Path(audio_path).name}")
+    logger.info(f"[Pipeline] idioma={language} | modelo={model_size} | denoise={enable_denoise}"
+                f" | diarize={enable_diarization} | correct={enable_correction}"
+                f" | translate={enable_translation}→{target_language}")
+    logger.info("=" * 60)
 
     # ── Paso 0a: Autodetección de idioma ─────────────────────
     if language == "auto":
@@ -834,9 +817,11 @@ def run_pipeline(
         progress(f"Calidad de audio: {quality_report.quality_label} | SNR: {quality_report.snr_db}dB", 5)
 
         # ── Paso 1: Preprocesamiento ──────────────────
+        _t1 = time.time()
         progress("Preprocesando audio...", 7)
         wav_path = os.path.join(tmpdir, "audio.wav")
         processed_path = preprocess_audio(audio_path, wav_path)
+        logger.debug(f"[Preprocesamiento] WAV generado: {processed_path}")
 
         if enable_denoise:
             denoise_strength = {
@@ -846,6 +831,8 @@ def run_pipeline(
             progress(f"Reduciendo ruido (intensidad {denoise_strength:.0%})...", 14)
             processed_path = _denoise_with_strength(processed_path, denoise_strength)
 
+        logger.info(f"[Preprocesamiento] ✓ completado en {_fmt_time(time.time()-_t1)}")
+
         # ── Paso 2: Transcripción ─────────────────────
         # Liberar VRAM del LLM antes de cargar Whisper
         # (en 8GB VRAM no pueden coexistir ambos)
@@ -853,6 +840,7 @@ def run_pipeline(
             progress("Liberando VRAM para Whisper...", 20)
             llm_engine.unload()
 
+        _t2 = time.time()
         progress(f"Transcribiendo con Whisper '{model_size}' (beam={beam_size})...", 22)
         try:
             segments, metadata = _transcribe_with_beam(processed_path, language, model_size, beam_size)
@@ -861,6 +849,14 @@ def run_pipeline(
 
         detected_lang = metadata["language"]
         progress(f"Transcripción completada — idioma detectado: {detected_lang.upper()}", 55)
+        logger.info(f"[ASR] ✓ {len(segments)} segmentos en {_fmt_time(time.time()-_t2)}"
+                    f" | lang={detected_lang} ({metadata['language_probability']:.0%})")
+        if segments:
+            logger.debug("[ASR] Primeros 3 segmentos:")
+            for s in segments[:3]:
+                logger.debug(f"  [{s.start:.1f}s→{s.end:.1f}s] {s.text!r}")
+        if not segments:
+            logger.warning("[ASR] ⚠ Transcripción produjo 0 segmentos — verifica el audio")
 
         # ── Auto-traducción al español ────────────────
         if auto_translate_to_spanish and detected_lang in NON_SPANISH_LANGUAGES:
@@ -875,23 +871,36 @@ def run_pipeline(
         # ── Paso 3: Diarización ───────────────────────
         speakers_found = 0
         if enable_diarization:
+            _t3 = time.time()
             progress("Identificando hablantes...", 60)
             diarization = diarize(processed_path, hf_token)
             if diarization:
                 segments = assign_speakers(segments, diarization)
                 speakers_found = len(set(s.speaker for s in segments if s.speaker))
+                logger.info(f"[Diarización] ✓ {speakers_found} hablantes en {_fmt_time(time.time()-_t3)}")
             else:
+                logger.warning("[Diarización] ⚠ Sin resultado — revisa HF_TOKEN y pyannote.audio")
                 errors.append("Diarización no disponible (requiere pyannote + HF_TOKEN)")
 
         # ── Paso 4: Corrección LLM ────────────────────
         corrected = False
         if enable_correction:
+            _t4 = time.time()
             backend_label = llm_engine.backend_name if llm_engine else "no disponible"
             progress(f"Corrigiendo con LLM ({backend_label})...", 70)
             original_texts = [s.text for s in segments]
             segments = correct_with_llm(segments, llm_engine)
-            corrected = any(s.text != o for s, o in zip(segments, original_texts))
-            if not corrected:
+            changed = [(o, s.text) for s, o in zip(segments, original_texts) if s.text != o]
+            corrected = bool(changed)
+            if corrected:
+                logger.info(f"[Corrección] ✓ {len(changed)}/{len(segments)} segmentos modificados"
+                            f" en {_fmt_time(time.time()-_t4)}")
+                for orig, fixed in changed[:2]:
+                    logger.debug(f"  ANTES: {orig!r}")
+                    logger.debug(f"  AFTER: {fixed!r}")
+            else:
+                logger.warning(f"[Corrección] ⚠ 0 segmentos modificados ({backend_label})"
+                               " — ¿LLM activo? ¿modelo cargado?")
                 errors.append(f"Corrección LLM no aplicada ({backend_label})")
 
         # ── Paso 5: Traducción ────────────────────────
@@ -900,12 +909,34 @@ def run_pipeline(
             if detected_lang == target_language:
                 errors.append(f"Traducción omitida: el audio ya está en {LANGUAGE_NAMES.get(target_language, target_language)}.")
             else:
+                _t5 = time.time()
                 lang_name = LANGUAGE_NAMES.get(target_language, target_language)
                 progress(f"Traduciendo a {lang_name}...", 85)
-                segments = translate_with_llm(segments, target_language, llm_engine)
+                segments = translate_with_llm(segments, target_language, llm_engine, source_language=detected_lang)
                 translated = True
+                logger.info(f"[Traducción] ✓ {lang_name} en {_fmt_time(time.time()-_t5)}")
 
-        progress("Generando archivo .srt...", 95)
+        # ── Paso 6: Formateo técnico según Guía Maestra ──────────────────
+        _t6 = time.time()
+        progress("Aplicando normas técnicas de subtitulado...", 96)
+        try:
+            from .subtitle_formatter import format_segments
+            segments = format_segments(segments)
+            logger.info(f"[Formatter] ✓ {len(segments)} segmentos formateados en {_fmt_time(time.time()-_t6)}")
+        except Exception as e:
+            logger.warning(f"[Formatter] Error en post-procesado: {e}")
+            errors.append(f"Formatter no aplicado: {e}")
+
+        progress("Generando archivo .srt...", 98)
+
+        _total = time.time() - _t_start
+        logger.info("=" * 60)
+        logger.info(f"[Pipeline] FIN — {_fmt_time(_total)} total")
+        logger.info(f"[Pipeline] segmentos={len(segments)} | lang={detected_lang}"
+                    f" | corrected={corrected} | translated={translated}")
+        if errors:
+            logger.info(f"[Pipeline] avisos ({len(errors)}): {' | '.join(errors)}")
+        logger.info("=" * 60)
 
         return PipelineResult(
             segments=segments,

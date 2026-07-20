@@ -55,7 +55,7 @@ Audio / Video / URL de YouTube
 | GPU | — | NVIDIA RTX 5060 Laptop 8 GB (Blackwell sm_120) |
 | RAM | 8 GB | 64 GB |
 | Python | 3.10+ | 3.12.3 |
-| SO | Ubuntu 20.04+ | Ubuntu 24.04 LTS |
+| SO | Ubuntu 20.04+ | Ubuntu 26.04 LTS |
 | CUDA | 11.8+ | 12.8 |
 
 > La GPU es opcional. Sin GPU el pipeline funciona en CPU (más lento).
