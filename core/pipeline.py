@@ -317,7 +317,7 @@ def correct_with_llm(segments: list[Segment], llm_engine) -> list[Segment]:
 # Capa 5: Traducción con LLM (llama.cpp / Ollama)
 # ─────────────────────────────────────────────
 
-def translate_with_llm(segments: list[Segment], target_language: str, llm_engine) -> list[Segment]:
+def translate_with_llm(segments: list[Segment], target_language: str, llm_engine, source_language: str = "en") -> list[Segment]:
     """
     Traduce subtítulos usando el LLMEngine activo.
     Soporta llama.cpp (principal) y Ollama (fallback).
@@ -326,7 +326,7 @@ def translate_with_llm(segments: list[Segment], target_language: str, llm_engine
         logger.warning("[LLM] Motor LLM no disponible. Saltando traducción.")
         return segments
 
-    return llm_engine.translate_subtitles(segments, target_language)
+    return llm_engine.translate_subtitles(segments, target_language, source_language=source_language)
 
 LANGUAGE_NAMES = {
     "es": "español", "en": "inglés", "fr": "francés",
@@ -493,11 +493,6 @@ def analyze_audio_quality(audio_path: str) -> AudioQualityReport:
             warnings=[f"Error en análisis: {str(e)}"],
             noise_profile="No analizado",
         )
-
-
-    except Exception as e:
-        logger.warning(f"[Traducción] Error: {e}")
-        return segments
 
 
 # ─────────────────────────────────────────────
@@ -906,7 +901,7 @@ def run_pipeline(
                 _t5 = time.time()
                 lang_name = LANGUAGE_NAMES.get(target_language, target_language)
                 progress(f"Traduciendo a {lang_name}...", 85)
-                segments = translate_with_llm(segments, target_language, llm_engine)
+                segments = translate_with_llm(segments, target_language, llm_engine, source_language=detected_lang)
                 translated = True
                 logger.info(f"[Traducción] ✓ {lang_name} en {_fmt_time(time.time()-_t5)}")
 
