@@ -228,6 +228,7 @@ def diarize(audio_path: str, hf_token: Optional[str] = None) -> Optional[list[di
     try:
         from pyannote.audio import Pipeline
         import torch
+        import soundfile as sf
 
         token = hf_token or os.environ.get("HF_TOKEN")
         if not token:
@@ -237,17 +238,27 @@ def diarize(audio_path: str, hf_token: Optional[str] = None) -> Optional[list[di
         logger.info("[Diarización] Cargando pipeline de pyannote...")
         pipeline = Pipeline.from_pretrained(
             "pyannote/speaker-diarization-3.1",
-            use_auth_token=token
+            token=token
         )
 
         device = "cuda" if __import__("torch").cuda.is_available() else "cpu"
         pipeline = pipeline.to(__import__("torch").device(device))
 
+        # Se carga el audio en memoria con soundfile en vez de dejar que pyannote
+        # use torchcodec para decodificar el archivo: torchcodec requiere que sus
+        # binarios nativos coincidan exactamente con la versión de ffmpeg/torch
+        # instalada, lo cual falla en muchos entornos (ver #issue torchcodec).
+        audio_data, sample_rate = sf.read(audio_path, dtype="float32", always_2d=True)
+        waveform = torch.from_numpy(audio_data.T)  # (channel, time)
+
         logger.info("[Diarización] Procesando hablantes...")
-        diarization = pipeline(audio_path)
+        output = pipeline({"waveform": waveform, "sample_rate": sample_rate})
+        # pyannote.audio >=4 envuelve el resultado en DiarizeOutput
+        # (Annotation en .speaker_diarization); <4 devuelve el Annotation directo.
+        annotation = getattr(output, "speaker_diarization", output)
 
         turns = []
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
+        for turn, _, speaker in annotation.itertracks(yield_label=True):
             turns.append({
                 "start": turn.start,
                 "end": turn.end,
