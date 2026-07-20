@@ -5,14 +5,14 @@
     "semantic_hash": "a5ae118e6eac8d0ca7daf41c006a4e0c"
   },
   "/home/jaime/solo_ia/projects/subtitulos_srt/app_flask.py": {
-    "mtime": 1781561554.4827712,
-    "ast_hash": "057b8ffeed722ce7e63776080254795b",
-    "semantic_hash": "057b8ffeed722ce7e63776080254795b"
+    "mtime": 1783474984.9140894,
+    "ast_hash": "aedbbd54bd28702ca1ebe781f3940330",
+    "semantic_hash": "aedbbd54bd28702ca1ebe781f3940330"
   },
   "/home/jaime/solo_ia/projects/subtitulos_srt/core/__init__.py": {
-    "mtime": 1774186860.5822134,
-    "ast_hash": "3c7f48f037c7a322c477fe767c39ea6e",
-    "semantic_hash": "3c7f48f037c7a322c477fe767c39ea6e"
+    "mtime": 1783286312.3243575,
+    "ast_hash": "0a3a725f1eb6f40c4e53dd1a05cf0b5f",
+    "semantic_hash": "0a3a725f1eb6f40c4e53dd1a05cf0b5f"
   },
   "/home/jaime/solo_ia/projects/subtitulos_srt/core/llm_engine.py": {
     "mtime": 1781561594.8988833,
@@ -50,9 +50,9 @@
     "semantic_hash": "f5a515397d7e782e92fbe0f2d288ea4f"
   },
   "/home/jaime/solo_ia/projects/subtitulos_srt/subtitles_cli.py": {
-    "mtime": 1781561513.145775,
-    "ast_hash": "88c8faabba95b5f44192e3a17c095b8a",
-    "semantic_hash": "88c8faabba95b5f44192e3a17c095b8a"
+    "mtime": 1783285528.359437,
+    "ast_hash": "04e5277217e70ac54b6f98d49a93278a",
+    "semantic_hash": "04e5277217e70ac54b6f98d49a93278a"
   },
   "/home/jaime/solo_ia/projects/subtitulos_srt/README.md": {
     "mtime": 1780528883.6121342,
@@ -73,5 +73,10 @@
     "mtime": 1781561429.405428,
     "ast_hash": "ae99fec465d4738940ced19c85fdbd5f",
     "semantic_hash": "ae99fec465d4738940ced19c85fdbd5f"
+  },
+  "/home/jaime/solo_ia/projects/subtitulos_srt/core/lang.py": {
+    "mtime": 1783286374.3775887,
+    "ast_hash": "5b96187cc2439da2c0c7f2fe4d46e4d0",
+    "semantic_hash": "5b96187cc2439da2c0c7f2fe4d46e4d0"
   }
 }
